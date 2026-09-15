@@ -7,17 +7,27 @@ use `fcli raw` or `fcli api`. The generated `raw` commands cover all 506 operati
 bundled Forgejo 16.0.4 API specification. Tests check that each operation has a command;
 this does not mean every operation has been tested against a server.
 
-## Build and get started
-
-Build from source with Rust, then log in to your Forgejo server:
+## Install
 
 ```bash
-cargo build --release
-./target/release/fcli auth login --host git.example.org
+cargo install --git https://github.com/perfectra1n/fcli --locked fcli
 ```
 
-Put `target/release/fcli` on your `PATH` to use the commands below. Run them from a
-repository checkout, or pass `-R owner/repo` to select a repository.
+Requires Rust 1.95 or newer. The trailing `fcli` names the package to install: the
+workspace root is a virtual manifest, so cargo needs to be told which one. `--locked`
+builds against the committed `Cargo.lock` rather than re-resolving.
+
+Prebuilt binaries for Linux, macOS, and Windows are attached to each
+[release](https://github.com/perfectra1n/fcli/releases), with shell completions included.
+
+Then log in to your Forgejo server:
+
+```bash
+fcli auth login --host git.example.org
+```
+
+Run the commands below from a repository checkout, or pass `-R owner/repo` to select a
+repository.
 
 ```bash
 fcli pr list
@@ -257,4 +267,4 @@ lower its budget in the same change. See [Ratchets](docs/ratchets.md).
 
 ## License
 
-MIT OR Apache-2.0.
+AGPL-3.0-only. See [LICENSE](LICENSE).

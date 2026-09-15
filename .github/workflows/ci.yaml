@@ -1,15 +1,30 @@
-name: ci
-
-on:
-  push:
-    branches: [main]
-  pull_request:
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: CI
 
 # Every step below is `mise run <task>`. The commands themselves live in
 # .mise/config.toml and nowhere else — mise is the source of truth for tools and
 # tasks in developer shells and in CI alike, so `mise run ci` locally runs the
 # same gates this file runs. A gate spelled out in both places drifts, and the
 # copy people run locally is always the one that loses.
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  merge_group:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -21,40 +36,22 @@ env:
   # an env var rather than a `--profile` flag precisely so `mise run test` stays
   # one command with one definition, in .mise/config.toml, for CI and laptops alike.
   NEXTEST_PROFILE: ci
-  # Four of the pinned tools come from GitHub releases through mise's `aqua:`
-  # backend, so installing them calls api.github.com.
-  #
-  # This runs on Gitea Actions, where `github.token` is a GITEA token. It is
-  # perfectly valid here and meaningless there, and mise-action's `github_token`
-  # input defaults to it — so mise sent it to GitHub, which answered
-  #
-  #   401 Unauthorized for .../repos/nextest-rs/nextest/releases/tags/...
-  #
-  # All three steps verified against mise 2026.8.6 rather than inferred:
-  #   - the URL returns 200 unauthenticated
-  #   - a bogus GITHUB_TOKEN reproduces the 401 exactly (mise even names it)
-  #   - an EMPTY GITHUB_TOKEN installs fine — mise treats it as "no token"
-  #     rather than sending an empty Authorization header, which would itself
-  #     be a 401. That last one is what makes the line below safe when the
-  #     secret is not set.
-  #
-  # Note only some tools break: hyperfine installs happily with a bad token,
-  # because its aqua entry resolves to a direct download and never calls the
-  # API. So the symptom is one tool failing, not four — which makes it look
-  # like a problem with that tool rather than with the token.
-  #
-  # So: send a REAL GitHub token if one is configured, and otherwise send nothing.
-  # GH_API_TOKEN is optional and wants no scopes at all — it only reads public
-  # release metadata. It is worth setting anyway: unauthenticated GitHub allows
-  # 60 requests per hour PER IP, and five jobs installing four tools each share
-  # one runner IP, so without it a busy afternoon turns into an intermittent 403
-  # that looks like an entirely different bug.
-  GITHUB_TOKEN: ${{ secrets.GH_API_TOKEN }}
-  MISE_GITHUB_TOKEN: ${{ secrets.GH_API_TOKEN }}
+
+# Four of the pinned tools come from GitHub releases through mise's `aqua:`
+# backend, so installing them calls api.github.com. jdx/mise-action defaults its
+# `github_token` input to ${{ github.token }}, which on GitHub is a real,
+# authenticated GitHub token — so those calls get 1,000 requests/hour instead of
+# the 60/hour/IP that unauthenticated callers share. Nothing to configure.
+#
+# (On Gitea this was the opposite: `github.token` is a *Gitea* token, valid there
+# and meaningless to api.github.com, which answered 401. That is why the previous
+# workflow carried a GH_API_TOKEN secret and passed it to every mise-action step.
+# Neither the secret nor the overrides are needed here.)
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    name: Check
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       # Installs the pinned toolchain and tools from .mise/config.toml — rust
@@ -62,16 +59,9 @@ jobs:
       # components. No rustup lines here: two places to bump a toolchain is one
       # too many.
       - uses: jdx/mise-action@v2
+      - uses: Swatinem/rust-cache@v2
         with:
-          # Overrides the input's `${{ github.token }}` default — see GITHUB_TOKEN above.
-          github_token: ${{ secrets.GH_API_TOKEN }}
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          shared-key: ci
 
       - name: Format
         run: mise run fmt-check
@@ -104,20 +94,14 @@ jobs:
   # their own job because they are seconds-fast and their failure message is the
   # actionable part — burying them behind the test suite hides that.
   ratchets:
-    runs-on: ubuntu-latest
+    name: Ratchets
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v2
+      - uses: Swatinem/rust-cache@v2
         with:
-          # Overrides the input's `${{ github.token }}` default — see GITHUB_TOKEN above.
-          github_token: ${{ secrets.GH_API_TOKEN }}
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          shared-key: ci
 
       # Text-only scans (python3, no build): a panic bypasses the error taxonomy
       # entirely, a stray process::exit bypasses the exit-code table, and a
@@ -136,33 +120,25 @@ jobs:
         run: mise run complexity-check
 
   deny:
-    runs-on: ubuntu-latest
+    name: Deny
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       # cargo-deny comes pinned from .mise/config.toml; `cargo install` here
       # would pull an unpinned build on every run and rebuild it from source.
       - uses: jdx/mise-action@v2
-        with:
-          # Overrides the input's `${{ github.token }}` default — see GITHUB_TOKEN above.
-          github_token: ${{ secrets.GH_API_TOKEN }}
       - run: mise run deny
 
   budgets:
-    runs-on: ubuntu-latest
+    name: Budgets
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       # hyperfine comes pinned from .mise/config.toml, same reasoning.
       - uses: jdx/mise-action@v2
+      - uses: Swatinem/rust-cache@v2
         with:
-          # Overrides the input's `${{ github.token }}` default — see GITHUB_TOKEN above.
-          github_token: ${{ secrets.GH_API_TOKEN }}
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-release-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          shared-key: release
 
       # Startup and size budgets. The generated layer holds 506 commands; if it
       # ever starts being constructed eagerly, `fcli --version` is where that
@@ -171,22 +147,16 @@ jobs:
         run: mise run budget-check
 
   integration:
-    runs-on: ubuntu-latest
+    name: Integration
+    runs-on: ubuntu-24.04
     # Boots a throwaway Forgejo and runs the real thing against it. The only tests that prove
     # the server agrees with the spec we generated from.
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v2
+      - uses: Swatinem/rust-cache@v2
         with:
-          # Overrides the input's `${{ github.token }}` default — see GITHUB_TOKEN above.
-          github_token: ${{ secrets.GH_API_TOKEN }}
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          shared-key: ci
       # Deliberately NOT nextest: the harness shares one Forgejo container per
       # process, and nextest runs every test in its own process, so it would boot
       # 24 containers. `mise run itest` -> `cargo xtask itest` -> `cargo test`.

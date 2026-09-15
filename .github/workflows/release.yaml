@@ -1,0 +1,191 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Release
+#
+# Tag-driven. `git tag v0.1.0 && git push --tags` builds the five supported
+# targets and attaches them to a GitHub Release.
+#
+# Unlike ci.yaml this does NOT go through mise. mise is the task runner for the
+# gates; a release is plain `cargo build`, and the toolchain still comes from one
+# place — rust-toolchain.toml, which rustup honours on its own. Adding mise here
+# would put a third name on the same 1.95.0 pin.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Fails the release before anything is built if the tag and the manifest
+  # disagree. A mislabelled release is public the moment it is created and
+  # cannot be quietly corrected, so this is cheap insurance.
+  verify:
+    name: Verify tag matches manifest
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag matches crates/fcli/Cargo.toml
+        run: |
+          set -euo pipefail
+          manifest="$(grep -m1 '^version' crates/fcli/Cargo.toml | cut -d'"' -f2)"
+          tag="${GITHUB_REF_NAME#v}"
+          echo "manifest=$manifest tag=$tag"
+          if [ "$manifest" != "$tag" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match manifest version $manifest"
+            exit 1
+          fi
+
+  # Completions are plain text and identical on every platform, so they are
+  # generated once here rather than five times. This also keeps the build matrix
+  # from ever needing to *run* the binary it just produced — which it could not
+  # do for x86_64-apple-darwin, built on an arm64 runner.
+  assets:
+    name: Generate completions
+    needs: verify
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-assets
+      - name: Generate shell completions
+        run: |
+          set -euo pipefail
+          mkdir -p dist/completions
+          for shell in bash zsh fish powershell elvish; do
+            cargo run --locked -q -p fcli -- completion "$shell" \
+              > "dist/completions/fcli.$shell"
+          done
+          ls -la dist/completions
+      - uses: actions/upload-artifact@v4
+        with:
+          name: completions
+          path: dist/completions/
+          retention-days: 1
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: assets
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+            archive: tar.gz
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+            archive: tar.gz
+          # Both macOS slices build on the arm64 runner. GitHub is winding the
+          # Intel (macos-13) images down, and the Apple toolchain cross-builds
+          # x86_64 natively, so this avoids depending on a deprecated runner.
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: zip
+    steps:
+      - uses: actions/checkout@v4
+
+      # No toolchain action: rustup is preinstalled on every GitHub runner and
+      # reads rust-toolchain.toml itself, so 1.95.0 is still defined in exactly
+      # one file.
+      - name: Install target
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup show
+          rustup target add ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-${{ matrix.target }}
+
+      - name: Build
+        shell: bash
+        run: cargo build --release --locked -p fcli --target ${{ matrix.target }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: completions
+          path: completions
+
+      # [profile.release] already strips symbols, so the binary needs no further
+      # processing here.
+      - name: Stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="fcli-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir -p "$stage"
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            cp "target/${{ matrix.target }}/release/fcli.exe" "$stage/"
+          else
+            cp "target/${{ matrix.target }}/release/fcli" "$stage/"
+          fi
+          cp README.md LICENSE "$stage/"
+          cp -r completions "$stage/completions"
+          echo "STAGE=$stage" >> "$GITHUB_ENV"
+
+      - name: Archive (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar czf "$STAGE.tar.gz" "$STAGE"
+          shasum -a 256 "$STAGE.tar.gz" > "$STAGE.tar.gz.sha256"
+
+      - name: Archive (zip)
+        if: matrix.archive == 'zip'
+        shell: bash
+        run: |
+          set -euo pipefail
+          7z a "$STAGE.zip" "$STAGE" > /dev/null
+          certutil -hashfile "$STAGE.zip" SHA256 | sed -n 2p \
+            | tr -d ' \r' > "$STAGE.zip.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            ${{ env.STAGE }}.tar.gz
+            ${{ env.STAGE }}.tar.gz.sha256
+            ${{ env.STAGE }}.zip
+            ${{ env.STAGE }}.zip.sha256
+          if-no-files-found: ignore
+          retention-days: 5
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - run: ls -la dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
