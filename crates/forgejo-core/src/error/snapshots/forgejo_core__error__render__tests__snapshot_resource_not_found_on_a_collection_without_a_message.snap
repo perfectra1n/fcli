@@ -1,0 +1,16 @@
+---
+source: crates/forgejo-core/src/error/render.rs
+expression: "snap(ErrorKind::ResourceNotFound\n{\n    kind: \"pull request\", id: String::new(), slug:\n    Some(\"perf3ct/fcli\".into()), server_message: None,\n}, c)"
+---
+error: referenced resource not found in perf3ct/fcli (HTTP 404)
+
+  request:    POST /api/v1/repos/perf3ct/fcli/pulls
+  repository: perf3ct/fcli  (found)
+
+what to do:
+  this request has no pull request identifier. Check referenced branch, tag, or
+  user names.
+  1. check branch, tag, and user names in the request body
+  2. fcli api repos/perf3ct/fcli/branches --jq '.[].name'
+  3. fcli api repos/perf3ct/fcli/tags --jq '.[].name'
+  note: when creating a pull request, check --head and --base.

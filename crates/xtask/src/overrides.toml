@@ -1,0 +1,279 @@
+# overrides.toml — the only place a human overrules the spec.
+#
+# Read by `xtask` during IR lowering and by nothing else. See overrides.rs for why emitters
+# are forbidden from touching this file.
+#
+# Adding an entry here is a *naming* decision with user-visible consequences: it changes a
+# command in `spec/name-lock.toml`, which is a versioned contract. Renaming an existing entry
+# therefore requires `cargo xtask codegen --accept-renames` and shows up in the changelog.
+
+# NOTE ON ORDERING: TOML puts every bare key after a `[table]` header *inside* that table,
+# so the two top-level lists have to come before the first section. Moving them below one
+# would not error — they would silently become keys of whichever table precedes them.
+
+# ---------------------------------------------------------------------------------------------
+# path_like — path parameters that may contain `/`
+# ---------------------------------------------------------------------------------------------
+#
+# `encode::seg` percent-encodes with the path-segment set, which turns `src/main.rs` into
+# `src%2Fmain.rs` and produces a 404 that looks like the file does not exist. These parameters
+# are documented by Forgejo as taking a path or a ref, so their slashes are structural and must
+# survive. Everything not listed here is encoded as a single segment — which is what protects
+# us from an owner literally named `a/b`.
+#
+# `filepath` and `ref` appear as path parameters in v16.0.4; `treePath`, `path` and `filename`
+# are listed because they appear as parameters elsewhere in the API surface and would have the
+# same problem the moment they show up in a path template.
+path_like = ["filepath", "treePath", "ref", "path", "filename"]
+
+# ---------------------------------------------------------------------------------------------
+# demote_required — fields to treat as optional despite the spec saying required
+# ---------------------------------------------------------------------------------------------
+#
+# Only 39 of 246 definitions declare `required` at all, so the blast radius is small. Spec
+# `required` is treated as advisory for deserialization: a server that stops sending a field is
+# better handled as a default than as a hard decode failure in the middle of a list command.
+demote_required = []
+
+# ---------------------------------------------------------------------------------------------
+# [op] — operationId → (group, command)
+# ---------------------------------------------------------------------------------------------
+#
+# Forgejo's 506 operationIds are camelCase except for 16 that are PascalCase, all of them
+# Actions or Git plumbing. Those 16 have no `<group>` prefix word, so the mangler would fall
+# back to `tags[0]` — which for all of them is `repository`. That is technically correct and
+# practically awful: `fcli raw repo list-action-runs` instead of `fcli raw run list`, with the
+# Actions surface scattered through a 198-command group.
+#
+# `gh` calls these `gh run` and `gh workflow`, and layer 3's porcelain will too, so putting
+# layer 2 in the same vocabulary means one mental model instead of two.
+
+[op.ListActionRuns]
+group = "run"
+command = "list"
+
+[op.ActionRun]
+group = "run"
+command = "view"
+why = "the bare noun as an operationId reads as a getter; `view` matches gh"
+
+[op.CancelActionRun]
+group = "run"
+command = "cancel"
+
+[op.DeleteActionRun]
+group = "run"
+command = "delete"
+
+[op.ListActionRunJobs]
+group = "run"
+command = "jobs"
+
+[op.ListActionRunArtifacts]
+group = "run"
+command = "artifacts"
+
+[op.ListActionArtifacts]
+group = "artifact"
+command = "list"
+
+[op.GetActionArtifact]
+group = "artifact"
+command = "view"
+
+[op.DeleteActionArtifact]
+group = "artifact"
+command = "delete"
+
+[op.DownloadActionArtifact]
+group = "artifact"
+command = "download"
+
+[op.ListActionTasks]
+group = "task"
+command = "list"
+
+[op.DispatchWorkflow]
+group = "workflow"
+command = "dispatch"
+
+[op.GetBlob]
+group = "git"
+command = "blob"
+
+[op.GetBlobs]
+group = "git"
+command = "blobs"
+
+[op.GetTree]
+group = "git"
+command = "tree"
+
+[op.GetAnnotatedTag]
+group = "git"
+command = "annotated-tag"
+
+# --- camelCase ids whose mechanical name is unreadable ---------------------------------------
+#
+# The word splitter treats an uppercase run followed by a lowercase letter as ending one word
+# before the last capital, so `OAuth2Application` splits as `O` + `Auth2` + `Application` and
+# `userGetOAuth2Application` becomes `get-o-auth2-application`. That rule is right for
+# `getGeneralAPISettings` (`get-general-api-settings`) and `repoGetRawFileOrLFS`
+# (`get-raw-file-or-lfs`); `OAuth2` is simply a word the rule cannot see. Five operations are
+# affected and they are spelled out here rather than special-cased in the splitter, because a
+# splitter with an acronym dictionary is a splitter whose output nobody can predict.
+
+[op.userGetOAuth2Application]
+group = "user"
+command = "get-oauth2-application"
+why = "the splitter cannot know OAuth2 is one word; see the note above"
+
+[op.userGetOAuth2Applications]
+group = "user"
+command = "list-oauth2-applications"
+why = "plural of the getter above; `list` also matches every other collection command"
+
+[op.userCreateOAuth2Application]
+group = "user"
+command = "create-oauth2-application"
+
+[op.userUpdateOAuth2Application]
+group = "user"
+command = "update-oauth2-application"
+
+[op.userDeleteOAuth2Application]
+group = "user"
+command = "delete-oauth2-application"
+
+# ---------------------------------------------------------------------------------------------
+# [newtype] — Model.field → ID newtype
+# ---------------------------------------------------------------------------------------------
+#
+# Curated, never automatic. The entries that matter are the ones where Forgejo carries both a
+# global row id and a per-repository counter on the same object: `Issue.id` is a database id,
+# `Issue.number` is what `#42` means, and `/issues/{index}` wants the latter while
+# `/issues/comments/{id}` wants the former. Mixing them up does not 404 — it silently operates
+# on a different, real issue. That is the most common class of Gitea-API bug, and these entries
+# turn it into a compile error.
+#
+# Extended as the models emitter (M4) lands; an unlisted field is a plain `i64`, which is
+# correct, just less safe.
+[newtype]
+"Issue.id" = "IssueId"
+"Issue.number" = "IssueIndex"
+"PullRequest.id" = "PullRequestId"
+"PullRequest.number" = "IssueIndex"
+"Repository.id" = "RepoId"
+"User.id" = "UserId"
+"Organization.id" = "OrgId"
+"Team.id" = "TeamId"
+"Comment.id" = "CommentId"
+"Label.id" = "LabelId"
+"Milestone.id" = "MilestoneId"
+"Release.id" = "ReleaseId"
+"Attachment.id" = "AttachmentId"
+"ActionRun.id" = "RunId"
+"ActionRunJob.id" = "JobId"
+"ActionArtifact.id" = "ArtifactId"
+"Hook.id" = "HookId"
+"PublicKey.id" = "KeyId"
+"DeployKey.id" = "KeyId"
+"TrackedTime.id" = "TrackedTimeId"
+"PullReview.id" = "ReviewId"
+
+# ---------------------------------------------------------------------------------------------
+# [enum_values] — known variants for bare `type: string` definitions
+# ---------------------------------------------------------------------------------------------
+#
+# Six definitions are Go named string types that the swagger generator emitted without their
+# values: it knows `StateType` is a string but not that the string is `open` or `closed`. They
+# become open enums, and these are their curated `KNOWN` lists.
+#
+# An incomplete list here is *harmless by construction*: an open enum accepts any value,
+# records unknown ones in the compat collector, and round-trips them verbatim. So this table
+# buys better completion and better help text, and risks nothing. Do not be tempted to make it
+# a closed enum for tidiness.
+[enum_values]
+StateType = ["open", "closed", "all"]
+CommitStatusState = ["pending", "success", "error", "failure", "warning"]
+# Forgejo also defines `UNKNOWN`, deliberately omitted: it mangles to the variant `Unknown`,
+# which is the name `open_enum!` gives its own catch-all arm, so listing it would declare the
+# variant twice. Omitting it costs nothing — `"UNKNOWN"` deserializes into
+# `ReviewStateType::Unknown("UNKNOWN")` and re-serializes verbatim, which is exactly what the
+# variant would have meant. The models emitter hard-errors if this is ever added back.
+ReviewStateType = ["APPROVED", "PENDING", "COMMENT", "REQUEST_CHANGES", "REQUEST_REVIEW"]
+NotifySubjectType = ["issue", "pull", "commit", "repository"]
+# Taken from the definition's own `title`, which spells the values out in prose.
+IssueFormFieldType = ["markdown", "textarea", "input", "dropdown", "checkboxes"]
+IssueFormFieldVisible = ["form", "content"]
+
+# ---------------------------------------------------------------------------------------------
+# [enum_name] — Model.field → name for that field's generated open enum
+# ---------------------------------------------------------------------------------------------
+#
+# Default is `<Model><Field>` in PascalCase, which is right for the one-off enums
+# (`ActionRunnerStatus`, `ActivityOpType`). These are the cases where the same value set
+# appears on several models and one shared type is both smaller and more useful — a permission
+# is a permission whether you are adding a collaborator or editing a team.
+[enum_name]
+"AddCollaboratorOption.permission" = "PermissionLevel"
+"CreateTeamOption.permission" = "PermissionLevel"
+"EditTeamOption.permission" = "PermissionLevel"
+"CreateOrgOption.visibility" = "VisibilityMode"
+"EditOrgOption.visibility" = "VisibilityMode"
+"CreateRepoOption.object_format_name" = "ObjectFormatName"
+"Repository.object_format_name" = "ObjectFormatName"
+"MergePullRequestOption.Do" = "MergeStyle"
+
+# ---------------------------------------------------------------------------------------------
+# [scope] — operationId → the token scope it really needs
+# ---------------------------------------------------------------------------------------------
+#
+# Derived from `tags[0]` plus the HTTP method (GET/HEAD → `read:`, else `write:`), which is
+# right for the overwhelming majority. Corrections go here so that the `InsufficientScope`
+# error message can tell the user which scope to create a new token with — and Forgejo scopes
+# are fixed at creation, so getting this wrong costs the user a round trip through the web UI.
+[scope]
+
+# ---------------------------------------------------------------------------------------------
+# [group_doc] — one-liners for `fcli raw --help`
+# ---------------------------------------------------------------------------------------------
+[group_doc]
+repo = "Repositories, pull requests, issues, contents, releases and everything under /repos"
+user = "The authenticated user, other users, keys, tokens and settings"
+org = "Organizations, their members, teams and hooks"
+issue = "Issues, comments, labels, milestones, reactions and tracked time"
+admin = "Instance administration: users, orgs, cron, runners, quotas"
+misc = "Markdown rendering, version, signing key, gitignore and licence templates"
+activitypub = "ActivityPub federation actors and inboxes"
+notify = "Notification threads and read state"
+package = "The package registry, owner-scoped"
+settings = "What this instance allows: API limits, attachments, repository and UI settings"
+run = "Actions runs"
+artifact = "Actions artifacts"
+task = "Actions tasks"
+workflow = "Actions workflows"
+git = "Git plumbing: blobs, trees, annotated tags"
+team = "Teams, independent of their organization"
+topic = "Repository topics"
+
+# ------------------------------------------------------------------------------ one_or_many
+#
+# `operationId` -> the name of a generated untagged enum that accepts either the declared
+# response model or a list of it. See `Overrides::one_or_many`.
+
+[one_or_many]
+# `GET /repos/{owner}/{repo}/contents/{filepath}` is declared to answer a single
+# `ContentsResponse`, and answers an *array* of them whenever `filepath` names a directory.
+# The operation's own summary admits it -- "Gets the metadata and contents (if a file) of an
+# entry in a repository, or a list of entries if a dir" -- but its `responses` block does not,
+# so the generated method could not express the directory case at all and hard-failed decoding
+# with "invalid type: sequence, expected struct ContentsResponse".
+#
+# An untagged enum rather than something simpler because both shapes genuinely occur on the
+# same route and neither is a superset of the other: `Vec<ContentsResponse>` cannot decode a
+# file and `ContentsResponse` cannot decode a directory, so any single concrete type is wrong
+# half the time. `serde_json::Value` would decode both and give up all typing for a route
+# people actually use. The enum decodes both, keeps the element type, and `into_vec()` /
+# `as_slice()` let a caller that does not care which arrived ignore the distinction.
+repoGetContents = "ContentsResponseOrList"

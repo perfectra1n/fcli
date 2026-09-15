@@ -1,0 +1,194 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Every step below is `mise run <task>`. The commands themselves live in
+# .mise/config.toml and nowhere else — mise is the source of truth for tools and
+# tasks in developer shells and in CI alike, so `mise run ci` locally runs the
+# same gates this file runs. A gate spelled out in both places drifts, and the
+# copy people run locally is always the one that loses.
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # mise refuses to read an untrusted config. mise-action normally handles this;
+  # set it explicitly so a self-hosted runner with a warm HOME behaves the same.
+  MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+  # Selects [profile.ci] from .config/nextest.toml (no fail-fast, longer per-test
+  # timeouts for a noisier runner, failures repeated at the end of the log). It is
+  # an env var rather than a `--profile` flag precisely so `mise run test` stays
+  # one command with one definition, in .mise/config.toml, for CI and laptops alike.
+  NEXTEST_PROFILE: ci
+  # Four of the pinned tools come from GitHub releases through mise's `aqua:`
+  # backend, so installing them calls api.github.com.
+  #
+  # This runs on Gitea Actions, where `github.token` is a GITEA token. It is
+  # perfectly valid here and meaningless there, and mise-action's `github_token`
+  # input defaults to it — so mise sent it to GitHub, which answered
+  #
+  #   401 Unauthorized for .../repos/nextest-rs/nextest/releases/tags/...
+  #
+  # All three steps verified against mise 2026.8.6 rather than inferred:
+  #   - the URL returns 200 unauthenticated
+  #   - a bogus GITHUB_TOKEN reproduces the 401 exactly (mise even names it)
+  #   - an EMPTY GITHUB_TOKEN installs fine — mise treats it as "no token"
+  #     rather than sending an empty Authorization header, which would itself
+  #     be a 401. That last one is what makes the line below safe when the
+  #     secret is not set.
+  #
+  # Note only some tools break: hyperfine installs happily with a bad token,
+  # because its aqua entry resolves to a direct download and never calls the
+  # API. So the symptom is one tool failing, not four — which makes it look
+  # like a problem with that tool rather than with the token.
+  #
+  # So: send a REAL GitHub token if one is configured, and otherwise send nothing.
+  # GH_API_TOKEN is optional and wants no scopes at all — it only reads public
+  # release metadata. It is worth setting anyway: unauthenticated GitHub allows
+  # 60 requests per hour PER IP, and five jobs installing four tools each share
+  # one runner IP, so without it a busy afternoon turns into an intermittent 403
+  # that looks like an entirely different bug.
+  GITHUB_TOKEN: ${{ secrets.GH_API_TOKEN }}
+  MISE_GITHUB_TOKEN: ${{ secrets.GH_API_TOKEN }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Installs the pinned toolchain and tools from .mise/config.toml — rust
+      # (kept in lockstep with rust-toolchain.toml) plus its rustfmt/clippy
+      # components. No rustup lines here: two places to bump a toolchain is one
+      # too many.
+      - uses: jdx/mise-action@v2
+        with:
+          # Overrides the input's `${{ github.token }}` default — see GITHUB_TOKEN above.
+          github_token: ${{ secrets.GH_API_TOKEN }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Format
+        run: mise run fmt-check
+
+      - name: Clippy
+        run: mise run clippy
+
+      - name: Test
+        run: mise run test
+
+      # nextest cannot run doctests (nextest-rs/nextest#16), so they are their own
+      # gate. Without this step, switching `test` to nextest would have silently
+      # stopped compile-checking forgejo-client's published crate-root example.
+      - name: Doctests
+        run: mise run test-doc
+
+      # The generated tree must always agree with the vendored spec. The task
+      # regenerates into a temp dir and diffs; a hand-edit under src/generated/
+      # fails here, which is the whole reason we can commit 42k lines of
+      # generated code and still trust them.
+      - name: Codegen is not stale
+        run: mise run codegen-check
+
+      # Generated crates are published, so their docs are part of the product.
+      - name: Docs build without warnings
+        run: mise run docs
+
+  # Ratchet gates: each freezes a count and fails when it grows. See
+  # docs/ratchets.md for what each one protects and how to drain it. They are
+  # their own job because they are seconds-fast and their failure message is the
+  # actionable part — burying them behind the test suite hides that.
+  ratchets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+        with:
+          # Overrides the input's `${{ github.token }}` default — see GITHUB_TOKEN above.
+          github_token: ${{ secrets.GH_API_TOKEN }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      # Text-only scans (python3, no build): a panic bypasses the error taxonomy
+      # entirely, a stray process::exit bypasses the exit-code table, and a
+      # reach-in to cmd/admin/support puts a lie in the dependency graph.
+      - name: No new panics
+        run: mise run panic-check
+
+      - name: No new process::exit
+        run: mise run exit-check
+
+      - name: No new reach-ins to cmd/admin/support
+        run: mise run support-check
+
+      # Needs a clippy pass, so it runs last in this job.
+      - name: No new over-complex functions
+        run: mise run complexity-check
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # cargo-deny comes pinned from .mise/config.toml; `cargo install` here
+      # would pull an unpinned build on every run and rebuild it from source.
+      - uses: jdx/mise-action@v2
+        with:
+          # Overrides the input's `${{ github.token }}` default — see GITHUB_TOKEN above.
+          github_token: ${{ secrets.GH_API_TOKEN }}
+      - run: mise run deny
+
+  budgets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # hyperfine comes pinned from .mise/config.toml, same reasoning.
+      - uses: jdx/mise-action@v2
+        with:
+          # Overrides the input's `${{ github.token }}` default — see GITHUB_TOKEN above.
+          github_token: ${{ secrets.GH_API_TOKEN }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-release-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      # Startup and size budgets. The generated layer holds 506 commands; if it
+      # ever starts being constructed eagerly, `fcli --version` is where that
+      # shows up first. The task builds the release binary itself (`depends`).
+      - name: Startup and size budgets
+        run: mise run budget-check
+
+  integration:
+    runs-on: ubuntu-latest
+    # Boots a throwaway Forgejo and runs the real thing against it. The only tests that prove
+    # the server agrees with the spec we generated from.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+        with:
+          # Overrides the input's `${{ github.token }}` default — see GITHUB_TOKEN above.
+          github_token: ${{ secrets.GH_API_TOKEN }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+      # Deliberately NOT nextest: the harness shares one Forgejo container per
+      # process, and nextest runs every test in its own process, so it would boot
+      # 24 containers. `mise run itest` -> `cargo xtask itest` -> `cargo test`.
+      # This job is what covers the 24 tests the nextest default profile filters out.
+      - run: mise run itest

@@ -1,0 +1,260 @@
+# fcli
+
+A command-line interface for [Forgejo](https://forgejo.org), with commands similar to `gh`.
+
+Use `fcli pr`, `fcli issue`, and `fcli repo` for common tasks. For other API operations,
+use `fcli raw` or `fcli api`. The generated `raw` commands cover all 506 operations in the
+bundled Forgejo 16.0.4 API specification. Tests check that each operation has a command;
+this does not mean every operation has been tested against a server.
+
+## Build and get started
+
+Build from source with Rust, then log in to your Forgejo server:
+
+```bash
+cargo build --release
+./target/release/fcli auth login --host git.example.org
+```
+
+Put `target/release/fcli` on your `PATH` to use the commands below. Run them from a
+repository checkout, or pass `-R owner/repo` to select a repository.
+
+```bash
+fcli pr list
+fcli pr create --fill                     # use the branch's commits for the title and body
+fcli issue list --label bug --state all -L 50
+fcli release create v0.1.0 ./dist/*        # create a release and upload its assets
+fcli run watch 1234 --exit-status         # wait for an Actions run to finish
+```
+
+Use `fcli --help` to list command groups, or add `--help` to any command.
+
+## Status
+
+`fcli` is under active development. Test coverage varies by command.
+
+The Docker integration suite tests against Forgejo 16.0.4. It covers authentication,
+configuration, aliases, completions, status, selected admin operations, and parts of the
+pull request, repository, issue, label, release, and topic commands. AGit tests create a
+pull request with a real push, update it with another push, and check that no branch was created.
+
+Many commands have only mock-based tests and output snapshots. These check requests and
+formatting, but cannot confirm server behavior. Actions runner operations, streaming,
+non-JSON responses, retry behavior, and token redaction are not covered by the Docker suite.
+
+The integration tests run through `mise run itest`; the normal test task excludes them.
+See [`crates/fcli-itest/tests/`](crates/fcli-itest/tests/) for the cases covered.
+
+One known limitation: permission advice for `fcli api` infers the required token scope from
+the URL. It can differ from the scope recorded for the equivalent generated command.
+
+## API access
+
+### Common commands
+
+Commands such as `fcli pr`, `fcli repo`, and `fcli issue` infer repository context,
+prompt for missing values, and format results as tables. Some combine several API requests.
+These hand-written commands are called *porcelain* in the contributor documentation.
+
+### Generated commands: `fcli raw`
+
+`fcli raw` provides typed flags for every operation in the bundled API specification.
+Each command's help shows its HTTP method and path. Path parameters can be positional
+arguments or flags.
+
+```bash
+fcli raw --help
+fcli raw search pull request
+fcli raw repo list-git-hooks myorg myrepo
+fcli raw repo get-contents myorg myrepo src/main.rs
+```
+
+Use `--dry-run` to inspect a request without sending it:
+
+```console
+$ fcli raw repo create-pull-request myorg myrepo \
+    --title "Fix typo" --head fix --base main --dry-run
+POST /repos/myorg/myrepo/pulls
+content-type: application/json
+{
+  "base": "main",
+  "head": "fix",
+  "title": "Fix typo"
+}
+```
+
+`--body-file -` reads a JSON body from stdin. Individual field flags override values in that
+body. If an operation has its own `--repo` parameter, use `-R` for the global repository option.
+
+### Direct requests: `fcli api`
+
+Use `fcli api` for a specific path under `/api/v1`, including endpoints newer than the
+bundled specification. `{owner}`, `{repo}`, and `{branch}` use the resolved repository context.
+
+```bash
+fcli api version
+fcli api user --jq .login
+fcli api 'repos/{owner}/{repo}/pulls' --paginate --jq '.[].number'
+fcli api -X POST -f title=hi 'repos/{owner}/{repo}/issues'
+fcli api -i repos/myorg/myrepo             # include the status line and headers
+```
+
+`-f` sends string values. `-F` accepts JSON types or reads a file when the value starts
+with `@`; `@-` reads stdin.
+
+## Output
+
+Tables use aligned columns in a terminal and tab-separated values when piped. Piped tables
+have no headers or padding and preserve empty cells. Progress and warnings go to stderr.
+
+```bash
+fcli pr list
+fcli pr list | cut -f2
+fcli pr list --json number,title,head_branch
+fcli pr list --json number --jq '.[].number'
+fcli pr list --json                       # list available fields without a network request
+fcli pr list --json number,title,updated_at \
+  --template '{{range .}}{{tablerow .number .title (timeago .updated_at)}}{{end}}'
+```
+
+JSON field names match the API, usually in `snake_case`. `--jq` runs in-process; no separate
+`jq` installation is needed. `--template` supports Go-style templates and table helpers.
+
+Use `--paginate` to fetch all pages or `--limit N` to cap the total number of items.
+See [Output](docs/output.md) for formatting rules, pagination, and exit codes.
+
+## Differences from `gh`
+
+| Option | `fcli` behavior |
+| --- | --- |
+| `--json` fields | API names such as `head_branch`, not `headRefName` |
+| `--json` without fields | Lists available fields on stdout and exits successfully, without a request |
+| `-R/--repo` | Selects `owner/repo`, not a Git remote name |
+| `--template` | Formats output; use `repo edit --as-template` or `repo create --from-template` for template repositories |
+| `--limit` | Caps result counts; use `quota rules create --bytes` for storage limits |
+
+`-t` is reserved for output templates, so titles use `--title`. The local limit option on
+`pr list` is `-L`; `repo sync` uses `-f` to force a sync.
+See [Differences from gh](docs/gh-differences.md) for details.
+
+## Accounts and authentication
+
+You can configure multiple servers and multiple accounts per server:
+
+```bash
+fcli auth login --host codeberg.org
+fcli auth login --host git.example.org
+fcli auth status
+fcli auth switch --host codeberg.org
+fcli pr list --host git.example.org
+```
+
+Tokens are stored in the OS keyring when available. Without a keyring, use `FORGEJO_TOKEN`
+or explicitly choose file storage. Token files use `0600` permissions.
+
+`fcli auth setup-git` registers a Git credential helper so Git can use your saved token.
+The helper ignores Git's credential-removal requests, so a rejected push does not remove
+your `fcli` login.
+
+## Forgejo features
+
+```bash
+fcli pr create --agit --topic fix-typo
+fcli times add 42 1h25m
+fcli stopwatch start 42
+fcli wiki list
+fcli quota status
+fcli quota rules create small --bytes 1GiB --subject size:all
+fcli mirror add https://github.com/example/repo --interval 8h
+fcli package list myorg --type cargo
+fcli transfer start newowner
+fcli admin user list
+```
+
+AGit creates a pull request by pushing to `refs/for/<branch>/<topic>`, without a fork or
+new branch. Push the same topic to update the request. Use `--force-push` after rewriting
+the commits.
+
+Repository Git hooks are available through `fcli git-hook list`, `view`, `edit`, and `disable`.
+Disabling a hook clears its script; it does not remove the hook from Forgejo's fixed set.
+
+## Errors
+
+Errors include a description, relevant details, and suggested commands. Server error messages
+are preserved, with secrets redacted.
+
+For repository-related 404 responses, `fcli` checks whether the repository is accessible
+before reporting a missing resource. If the repository itself is inaccessible, the error
+lists possible causes rather than assuming it was deleted.
+
+## Limitations
+
+- SSH `Host` aliases from `~/.ssh/config` are not resolved. Use `fcli repo set-default` to
+  select the repository instead.
+- No third-party extension commands or TUI.
+- No translated messages.
+- No persistent cache of GET responses. Instance capabilities are cached for the current process.
+- `--sudo` is a global option, not a separate per-command option.
+
+## Development
+
+[mise](https://mise.jdx.dev) installs the pinned toolchain and tools from `.mise/config.toml`.
+Local checks and CI use the same tasks:
+
+```bash
+mise run build-release
+mise run test             # unit and snapshot tests; no Docker required
+mise run test-doc
+mise run codegen-check    # check generated code against the bundled specification
+mise run itest            # integration tests; requires Docker
+mise run ci               # all CI checks
+```
+
+`mise tasks` lists available tasks. To run Cargo directly:
+
+```bash
+cargo build --release
+cargo nextest run --workspace --locked
+cargo test --workspace --doc --locked
+cargo xtask codegen --check
+cargo xtask itest
+```
+
+`rust-toolchain.toml` pins the Rust version for Cargo users. The nextest configuration excludes
+Docker integration tests from the default run; `cargo xtask itest` builds the CLI and runs them
+against a temporary Forgejo instance.
+
+CI also checks code-quality counts, startup time, and binary size. When a count drops,
+lower its budget in the same change. See [Ratchets](docs/ratchets.md).
+
+## Project layout
+
+| Crate | Contents |
+| --- | --- |
+| `forgejo-core` | HTTP, authentication, pagination, errors, configuration, and Git context |
+| `forgejo-model` | Generated API types and deserializers |
+| `forgejo-client` | Generated client methods and metadata |
+| `fcli-raw` | Generated-command CLI built from metadata |
+| `fcli` | CLI commands and output formatting |
+| `xtask` | Code generation and development tasks |
+| `fcli-itest` | Integration tests against Forgejo |
+
+`forgejo-core`, `forgejo-model`, and `forgejo-client` can also be used as a Rust SDK.
+
+## Documentation
+
+- [API layers](docs/layers.md)
+- [Output and exit codes](docs/output.md)
+- [Differences from gh](docs/gh-differences.md)
+- [Command conventions](docs/porcelain-conventions.md)
+- [CI budgets](docs/ratchets.md)
+- [Contributing](CONTRIBUTING.md)
+
+## Related tools
+
+- [`forgejo-cli`](https://codeberg.org/forgejo-contrib/forgejo-cli) (`fj`): another Forgejo CLI.
+- [`tea`](https://gitea.com/gitea/tea): Gitea's CLI, also usable with Forgejo.
+
+## License
+
+MIT OR Apache-2.0.

@@ -1,0 +1,14 @@
+---
+source: crates/forgejo-core/src/error/render.rs
+expression: "snap(ErrorKind::KeyringUnavailable { cause: KeyringCause::NoBackend },\nRequestCtx::default())"
+---
+error: OS keyring is unavailable
+
+  cause: no credential backend answered (on Linux, usually no D-Bus session)
+
+what to do:
+  unlock or enable the keyring, or use one of these alternatives:
+  1. fcli auth login --host git.example.org --insecure-storage  (a 0600 file)
+  2. FCLI_TOKEN=<token> fcli auth status  (environment only)
+  note: set FCLI_CREDENTIAL_STORE to env, file, or keyring to select a
+        storage backend.

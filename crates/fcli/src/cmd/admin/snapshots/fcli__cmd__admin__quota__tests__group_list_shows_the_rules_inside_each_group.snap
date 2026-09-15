@@ -1,0 +1,10 @@
+---
+source: crates/fcli/src/cmd/admin/quota.rs
+expression: "String::from_utf8(buf).unwrap()"
+---
+Showing 3 quota groups
+
+GROUP      RULES  LIMITS
+small      tight  1.0 MiB
+unlimited  none   unlimited
+empty

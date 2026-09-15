@@ -1,0 +1,19 @@
+---
+source: crates/fcli/src/cmd/nodeinfo.rs
+expression: "render_overview(&testing::term(), \"git.example.org\", &info(),\nSome(&settings()))"
+---
+git.example.org
+
+software      forgejo 16.0.4
+homepage      https://forgejo.org/
+registration  closed (admin creates accounts)
+protocols     activitypub
+users         3 total, 1 active this month
+content       7 posts, 11 comments
+nodeinfo      schema 2.1
+
+api limits
+  max_response_items          50  every `limit` is clamped to this, silently
+  default_paging_num          30  page size when none is asked for
+  default_git_trees_per_page  1000  entries per page of a git tree
+  default_max_blob_size       10 MiB  above this, file contents are omitted

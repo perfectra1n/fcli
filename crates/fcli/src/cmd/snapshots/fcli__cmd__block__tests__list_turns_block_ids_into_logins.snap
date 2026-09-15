@@ -1,0 +1,6 @@
+---
+source: crates/fcli/src/cmd/block.rs
+expression: "String::from_utf8(buf).unwrap()"
+---
+spammer	2024-03-01T09:00:00Z
+#9	2024-03-02T09:00:00Z

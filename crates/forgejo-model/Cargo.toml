@@ -1,0 +1,19 @@
+[package]
+name = "forgejo-model"
+version = "0.1.0"
+description = "Types for the Forgejo API, generated from the Forgejo OpenAPI specification"
+keywords = ["forgejo", "gitea", "api", "types"]
+categories = ["api-bindings"]
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+forgejo-core.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
