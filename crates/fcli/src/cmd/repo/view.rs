@@ -66,21 +66,56 @@ pub fn run(globals: &GlobalOpts, args: &Args) -> Result<()> {
             return support::open_web(&rt, &url);
         }
 
-        let repo = api.repo().get(&slug.owner, &slug.name).await?;
+        // Decided *before* either request goes out, so `--json`/`--jq`/`--template` still costs
+        // exactly one call: forty kilobytes of prose in front of a data pipeline is not a
+        // feature, and a README fetch started speculatively and thrown away is worse than the
+        // serial one it replaced.
+        let want_readme = rt.term().tty
+            && !args.no_readme
+            && !matches!(wanted, support::machine::Wanted::Machine(_));
+
+        let (repo, readme) = fetch(&api, &slug, args.r#ref.as_deref(), want_readme).await?;
         if let support::machine::Wanted::Machine(m) = &wanted {
             return support::machine::emit(&rt, globals, m, support::to_value(&repo)?);
         }
 
-        let readme = if rt.term().tty && !args.no_readme {
-            readme(&api, &slug, args.r#ref.as_deref()).await
-        } else {
-            None
-        };
         let mut out = std::io::stdout().lock();
         out.write_all(render(&repo, readme.as_deref(), rt.term()).as_bytes())?;
         out.flush()?;
         Ok(())
     })
+}
+
+/// The repository and, when a human is going to read it, its README — concurrently.
+///
+/// `join!` rather than `try_join!`: [`readme`] returns an `Option` and swallows every failure by
+/// design (see its doc comment), so there is no second error for a `try_join!` to race against,
+/// and unwrapping `repo` afterwards leaves the one error this can report exactly where it was.
+///
+/// `want_readme` is decided by the caller before either future is built, so the machine path
+/// never *starts* the README request — this is a gate, not a discarded result.
+///
+/// [`readme`]'s own two calls stay sequential: the raw-file read needs the path the
+/// contents listing found.
+///
+/// Split out from [`run`] so a `FakeTransport` test can count the requests without a
+/// [`Runtime`].
+async fn fetch(
+    api: &Api,
+    slug: &RepoSlug,
+    r#ref: Option<&str>,
+    want_readme: bool,
+) -> Result<(Repository, Option<String>)> {
+    // Bound rather than called inline: `api.repo()` returns a borrow of `api`, and a temporary of
+    // it does not outlive the `join!` that awaits both futures.
+    let repos = api.repo();
+    let (repo, readme) = futures::join!(repos.get(&slug.owner, &slug.name), async {
+        match want_readme {
+            true => readme(api, slug, r#ref).await,
+            false => None,
+        }
+    });
+    Ok((repo?, readme))
 }
 
 /// The README's text, or `None`.
@@ -266,6 +301,51 @@ fn inline(line: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use forgejo_core::http::transport::Canned;
+    use std::sync::Arc;
+    use support::testing;
+
+    /// Bug this prevents: `fcli repo view --json …` paying for the README it is never going to
+    /// print. The README now *overlaps* the repository read, so "decide, then fetch" has to stay
+    /// decided before either request leaves — a speculative fetch that is discarded is worse than
+    /// the serial one it replaced, and the module header's rule is that forty kilobytes of prose
+    /// in front of a data pipeline is not a feature.
+    #[tokio::test]
+    async fn the_machine_path_costs_one_request_and_never_starts_the_readme() {
+        let fixture = || {
+            let t = Arc::new(testing::on(
+                testing::on(
+                    testing::on(
+                        testing::transport(),
+                        "GET",
+                        "/api/v1/repos/them/proj",
+                        Canned::json(200, r#"{"full_name":"them/proj","name":"proj"}"#),
+                    ),
+                    "GET",
+                    "/api/v1/repos/them/proj/contents",
+                    Canned::json(200, r#"[{"name":"README.md","path":"README.md","type":"file"}]"#),
+                ),
+                "GET",
+                "/api/v1/repos/them/proj/raw/README.md",
+                Canned::text(200, "# proj\n"),
+            ));
+            (testing::api_at(testing::EXAMPLE, t.clone()), t)
+        };
+        let slug = RepoSlug::new("them", "proj");
+
+        let (api, t) = fixture();
+        let (repo, readme) = fetch(&api, &slug, None, false).await.expect("view");
+        assert_eq!(repo.full_name, "them/proj");
+        assert!(readme.is_none());
+        assert_eq!(t.call_count(), 1, "{:?}", t.calls());
+
+        // A human on a terminal still gets it, and `readme`'s own two calls stay dependent: the
+        // raw read needs the path the listing found.
+        let (api, t) = fixture();
+        let (_, readme) = fetch(&api, &slug, None, true).await.expect("view");
+        assert_eq!(readme.as_deref(), Some("# proj\n"));
+        assert_eq!(t.call_count(), 3, "{:?}", t.calls());
+    }
 
     fn repo() -> Repository {
         Repository {

@@ -177,12 +177,25 @@ async fn create(cx: &Cx, a: &CreateArgs) -> Result<()> {
 
     // Named labels and a named milestone are resolved before anything is written, so a typo is
     // a validation error naming the labels that do exist rather than a half-created issue.
-    let label_ids = shared::label_ids(&cx.api, cx.repo()?, &draft.labels).await?;
-    let milestone = match &draft.milestone {
-        Some(title) => Some(shared::milestone_by_title(cx, title).await?),
-        None => None,
+    //
+    // All three are read-only lookups that depend on nothing but the command line, so they run
+    // at the same time. `join!` with a fixed unwrap order rather than `try_join!`, and that is a
+    // correctness choice: today a bad label name always beats a bad milestone title because the
+    // labels were looked up first, and `try_join!` returns the first error to *occur* — so
+    // `-l nope -m nope` would report a different problem depending on which response the network
+    // delivered first.
+    let resolve_labels = shared::label_ids(&cx.api, cx.repo()?, &draft.labels);
+    let resolve_milestone = async {
+        match &draft.milestone {
+            Some(title) => shared::milestone_by_title(cx, title).await.map(Some),
+            None => Ok(None),
+        }
     };
-    let assignees = cx.resolve_users(&draft.assignees).await?;
+    let resolve_assignees = cx.resolve_users(&draft.assignees);
+    let resolved = futures::join!(resolve_labels, resolve_milestone, resolve_assignees);
+    let label_ids = resolved.0?;
+    let milestone = resolved.1?;
+    let assignees = resolved.2?;
 
     let mut body = forgejo_model::CreateIssueOption {
         title: draft.title.clone(),
@@ -358,7 +371,24 @@ async fn list(cx: &Cx, globals: &GlobalOpts, a: &ListArgs) -> Result<()> {
 // ---------------------------------------------------------------------------------- view
 
 async fn view(cx: &Cx, a: &ViewArgs) -> Result<()> {
-    let issue = shared::get_issue(cx, a.target.number).await?;
+    // The comments are a second read of the same index, independent of the issue itself, so the
+    // two overlap into one round trip's worth of waiting instead of two.
+    //
+    // Gated on all three flags, not just `-c`: `--web` returns below without rendering anything
+    // and `--json` emits the issue alone, so fetching comments for either would buy a slowdown
+    // for output nobody reads. That is the guard `fcli pr view` was missing.
+    let (issue, comments) = if a.comments && !a.web && !cx.out.is_machine() {
+        let both = futures::join!(
+            shared::get_issue(cx, a.target.number),
+            all_comments(cx, a.target.number)
+        );
+        // Unwrapped in the order the two requests used to run in, rather than through
+        // `try_join!`: an issue that 404s must still report the issue's error and not whichever
+        // arm the network happened to fail first.
+        (both.0?, both.1?)
+    } else {
+        (shared::get_issue(cx, a.target.number).await?, Vec::new())
+    };
     if a.web {
         return cx.browse(&issue.html_url);
     }
@@ -404,7 +434,6 @@ async fn view(cx: &Cx, a: &ViewArgs) -> Result<()> {
     }
 
     if a.comments {
-        let comments = all_comments(cx, a.target.number).await?;
         for c in &comments {
             text.push_str(&format!(
                 "\n─── {} commented {} (comment {})\n",
@@ -639,25 +668,38 @@ async fn edit(cx: &Cx, a: &EditArgs) -> Result<()> {
 // ------------------------------------------------------------------------------ pin, unpin
 
 async fn pin(cx: &Cx, a: &PinArgs) -> Result<()> {
+    // Validated before anything is sent, for the reason `create` gives above: a `--position 0`
+    // checked *after* the pin left the issue pinned and the command exiting 2 with
+    // "--position counts from 1", which every user reads as "nothing happened".
+    if let Some(position) = a.position
+        && position < 1
+    {
+        return Err(support::usage("--position counts from 1"));
+    }
+
     // Pinning something already pinned is a 400 from Forgejo, and `fcli issue pin 42
     // --position 1` on an already-pinned issue is a completely reasonable thing to type. One
     // read makes it work instead of failing on the first of two calls.
     let issue = shared::get_issue(cx, a.target.number).await?;
+    let mut wrote = false;
     if issue.pin_order == 0 {
         cx.api.issue().pin_issue(cx.owner()?, cx.name()?, a.target.number.get()).await?;
+        wrote = true;
     } else {
         cx.trace(&format!("#{} is already pinned at {}", issue.number, issue.pin_order));
     }
     if let Some(position) = a.position {
-        if position < 1 {
-            return Err(support::usage("--position counts from 1"));
-        }
         cx.api
             .issue()
             .move_issue_pin(cx.owner()?, cx.name()?, a.target.number.get(), position)
             .await?;
+        wrote = true;
     }
-    let issue = shared::get_issue(cx, a.target.number).await?;
+    // `pin_issue` and `move_issue_pin` both answer with no body, so a `pin_order` that reflects
+    // the write has to come from a fresh read. When nothing was written — an issue that was
+    // already pinned and no `--position` to move it to — the issue already in hand *is* the
+    // current one, and re-reading it is a round trip that can only answer with what we have.
+    let issue = if wrote { shared::get_issue(cx, a.target.number).await? } else { issue };
     emit_issue(cx, &issue, "Pinned")
 }
 
@@ -727,19 +769,33 @@ async fn depends_write(cx: &Cx, a: &DependsArgs, add: bool) -> Result<()> {
 
 async fn depends_list(cx: &Cx, a: &TargetArgs) -> Result<()> {
     let index = a.number.get();
-    let mut blockers: Vec<Issue> = Vec::new();
-    let q = IssueListIssueDependenciesQuery::default();
-    let mut stream = cx.api.issue().list_issue_dependencies(cx.owner()?, cx.name()?, index, &q);
-    while let Some(item) = stream.next().await {
-        blockers.push(item?);
-    }
-
-    let mut blocked: Vec<Issue> = Vec::new();
-    let q = IssueListBlocksQuery::default();
-    let mut stream = cx.api.issue().list_blocks(cx.owner()?, cx.name()?, index, &q);
-    while let Some(item) = stream.next().await {
-        blocked.push(item?);
-    }
+    // `/dependencies` and `/blocks` are two independent collections, both keyed by an index that
+    // is known before either starts, so they are walked at the same time rather than one after
+    // the other.
+    let walk_blockers = async {
+        let q = IssueListIssueDependenciesQuery::default();
+        let mut stream = cx.api.issue().list_issue_dependencies(cx.owner()?, cx.name()?, index, &q);
+        let mut out: Vec<Issue> = Vec::new();
+        while let Some(item) = stream.next().await {
+            out.push(item?);
+        }
+        Ok::<_, Error>(out)
+    };
+    let walk_blocked = async {
+        let q = IssueListBlocksQuery::default();
+        let mut stream = cx.api.issue().list_blocks(cx.owner()?, cx.name()?, index, &q);
+        let mut out: Vec<Issue> = Vec::new();
+        while let Some(item) = stream.next().await {
+            out.push(item?);
+        }
+        Ok::<_, Error>(out)
+    };
+    // `join!` and a fixed unwrap order, not `try_join!`: on a repository where both walks fail
+    // `try_join!` reports whichever request lost the race, so the message would change between
+    // runs. This reports the blockers' error — the one the serial version always reported.
+    let (blockers, blocked) = futures::join!(walk_blockers, walk_blocked);
+    let blockers = blockers?;
+    let blocked = blocked?;
 
     if cx.out.is_machine() {
         // One array, each item tagged with its direction, so `--jq` can split them. Two
@@ -1156,6 +1212,126 @@ mod tests {
         assert_eq!(hits, 2, "a complete list must not probe for a total it already knows");
     }
 
+    /// An issue that is already pinned and is not being moved has nothing written to it, so the
+    /// trailing re-read has nothing to learn. `pin_issue` and `move_issue_pin` answer with no
+    /// body, which is the only reason that second GET exists at all.
+    #[tokio::test]
+    async fn pinning_an_already_pinned_issue_costs_one_request() {
+        let pinned = issue_42().replace(r#""pin_order": 0"#, r#""pin_order": 3"#);
+        let fake = Arc::new(FakeTransport::new().on(
+            method!("GET"),
+            "/api/v1/repos/perf3ct/fcli/issues/42",
+            Canned::json(200, pinned),
+        ));
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let globals = GlobalOpts::default();
+        let cx = cx(fake.clone(), &buf, &globals, crate::output::Term::piped());
+        let args = PinArgs { target: TargetArgs { number: IssueIndex::new(42) }, position: None };
+
+        pin(&cx, &args).await.unwrap();
+        assert_eq!(
+            fake.call_count(),
+            1,
+            "nothing was written, so nothing to re-read: {:?}",
+            fake.calls()
+        );
+    }
+
+    /// `/dependencies` and `/blocks` are independent collections keyed by the same index, so
+    /// `depends list` walks them at the same time. Matched on **path**, never on position: the
+    /// two now race, and a positional assertion would go flaky rather than fail honestly.
+    #[tokio::test]
+    async fn depends_list_walks_both_directions() {
+        let fake = Arc::new(
+            FakeTransport::new()
+                .on(
+                    method!("GET"),
+                    "/api/v1/settings/api",
+                    Canned::json(200, r#"{"max_response_items":50}"#),
+                )
+                .on_sequence(
+                    method!("GET"),
+                    "/api/v1/repos/perf3ct/fcli/issues/42/dependencies",
+                    Vec::from([
+                        Canned::json(200, format!("[{}]", issue_42())),
+                        Canned::json(200, "[]".to_owned()),
+                    ]),
+                )
+                .on_sequence(
+                    method!("GET"),
+                    "/api/v1/repos/perf3ct/fcli/issues/42/blocks",
+                    Vec::from([Canned::json(200, "[]".to_owned())]),
+                ),
+        );
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let globals = GlobalOpts::default();
+        let cx = cx(fake.clone(), &buf, &globals, crate::output::Term::tty(100));
+
+        depends_list(&cx, &TargetArgs { number: IssueIndex::new(42) }).await.unwrap();
+
+        for direction in ["dependencies", "blocks"] {
+            let path = format!("/api/v1/repos/perf3ct/fcli/issues/42/{direction}");
+            assert!(
+                fake.calls().iter().any(|c| c.path == path),
+                "{direction} was never walked: {:?}",
+                fake.calls()
+            );
+        }
+        // Blockers first, then what the issue blocks — the order `push_dependencies` is called
+        // in, which concurrency must not be allowed to reshuffle.
+        let out = text(&buf);
+        assert!(out.contains("blocked by"), "{out}");
+    }
+
+    /// Bug this prevents: `--json` and `--web` paying for comments neither one prints. `-c` is a
+    /// display flag; both of those paths return before any comment is rendered, so the fetch has
+    /// to be gated on all three and not just on `-c`.
+    #[tokio::test]
+    async fn view_fetches_comments_only_when_it_will_print_them() {
+        let routes = || {
+            FakeTransport::new()
+                .on(
+                    method!("GET"),
+                    "/api/v1/repos/perf3ct/fcli/issues/42",
+                    Canned::json(200, issue_42()),
+                )
+                .on(
+                    method!("GET"),
+                    "/api/v1/repos/perf3ct/fcli/issues/42/comments",
+                    Canned::json(200, "[]"),
+                )
+        };
+        let args = || ViewArgs {
+            target: TargetArgs { number: IssueIndex::new(42) },
+            comments: true,
+            web: false,
+        };
+
+        // Human `-c`: both reads happen, and they happen together.
+        let fake = Arc::new(routes());
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let globals = GlobalOpts::default();
+        let human = cx(fake.clone(), &buf, &globals, crate::output::Term::piped());
+        view(&human, &args()).await.unwrap();
+        assert_eq!(fake.call_count(), 2, "{:?}", fake.calls());
+        // Matched on path, not position: the two arms race, and an index would be flaky.
+        for path in [
+            "/api/v1/repos/perf3ct/fcli/issues/42",
+            "/api/v1/repos/perf3ct/fcli/issues/42/comments",
+        ] {
+            assert!(fake.calls().iter().any(|c| c.path == path), "{path} was never read");
+        }
+
+        // `-c --json`: the issue alone, because `--json` emits the issue and returns.
+        let fake = Arc::new(routes());
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let globals = GlobalOpts { json: Some("number".to_owned()), ..GlobalOpts::default() };
+        let machine = cx(fake.clone(), &buf, &globals, crate::output::Term::piped());
+        view(&machine, &args()).await.unwrap();
+        assert_eq!(fake.call_count(), 1, "--json must not pay for comments: {:?}", fake.calls());
+        assert_eq!(fake.calls()[0].path, "/api/v1/repos/perf3ct/fcli/issues/42");
+    }
+
     /// Bug this prevents: `--blocked-by` and `--blocks` being wired to each other's endpoint.
     /// Both return 200 and an Issue, so nothing fails — the dependency is simply backwards.
     #[tokio::test]
@@ -1196,6 +1372,36 @@ mod tests {
         assert_eq!(calls[1].path, "/api/v1/repos/perf3ct/fcli/issues/42/blocks");
         assert!(calls[1].body_str().contains(r#""index":9"#), "{}", calls[1].body_str());
         insta::assert_snapshot!("depends_human", text(&buf));
+    }
+
+    /// Bug this prevents — the reported one. `fcli issue pin 42 --position 0` sent `POST
+    /// .../pin`, pinned the issue, and *then* exited 2 saying "--position counts from 1". The
+    /// user reads a usage error as "nothing happened" and the issue is pinned anyway, which is
+    /// exactly the half-written state `create` refuses at the top of this file.
+    #[tokio::test]
+    async fn a_position_below_one_is_refused_before_anything_is_pinned() {
+        let fake = Arc::new(
+            FakeTransport::new()
+                .on(
+                    method!("GET"),
+                    "/api/v1/repos/perf3ct/fcli/issues/42",
+                    Canned::json(200, issue_42()),
+                )
+                .on(method!("POST"), "/api/v1/repos/perf3ct/fcli/issues/42/pin", Canned::new(204)),
+        );
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let globals = GlobalOpts::default();
+        let cx = cx(fake.clone(), &buf, &globals, crate::output::Term::piped());
+        let args =
+            PinArgs { target: TargetArgs { number: IssueIndex::new(42) }, position: Some(0) };
+
+        assert_eq!(pin(&cx, &args).await.unwrap_err().exit_code(), 2);
+        assert_eq!(
+            fake.call_count(),
+            0,
+            "a rejected --position must not pin first: {:?}",
+            fake.calls()
+        );
     }
 
     #[tokio::test]

@@ -159,10 +159,25 @@ struct NodeInfoUsers {
 /// correct: the caller asked "what can this instance do", and "I could not find out" is a
 /// complete, actionable answer expressed as [`Capabilities::conservative`]. Propagating the
 /// error would turn an optional metadata endpoint into a hard dependency for every command.
+///
+/// # The two requests overlap, and `join!` is not `try_join!`
+///
+/// The endpoints are independent, so sending `/nodeinfo` only after `/settings/api` answers
+/// charges every process a serial round trip before its first paginated call — over a WAN to a
+/// self-hosted instance that is the dominant cost of a short command. [`futures::join!`] drives
+/// both to completion; [`futures::try_join!`] would cancel the survivor the moment the other
+/// returned an error, and **either endpoint being absent is normal** (see the module header), so
+/// a `404` on `/settings/api` would take `/nodeinfo`'s instance label down with it and empty the
+/// "this instance is forgejo 9.0.1" line out of every error message on old instances.
 pub(crate) async fn probe(client: &Client) -> Capabilities {
     let mut caps = Capabilities::conservative();
 
-    if let Ok(s) = client.json::<GeneralApiSettings>(Request::get("/settings/api")).await {
+    let (settings, nodeinfo) = futures::join!(
+        client.json::<GeneralApiSettings>(Request::get("/settings/api")),
+        client.json::<NodeInfo>(Request::get("/nodeinfo")),
+    );
+
+    if let Ok(s) = settings {
         // A zero means the instance sent the field with no value, or sent a shape we mis-read.
         // Keep the upstream default rather than adopting a zero, which would make
         // `effective_limit` ask for `limit=0` and return nothing at all.
@@ -181,7 +196,7 @@ pub(crate) async fn probe(client: &Client) -> Capabilities {
         caps.settings_known = true;
     }
 
-    if let Ok(n) = client.json::<NodeInfo>(Request::get("/nodeinfo")).await
+    if let Ok(n) = nodeinfo
         && !n.software.name.is_empty()
     {
         caps.instance = Some(Instance {
@@ -198,8 +213,10 @@ pub(crate) async fn probe(client: &Client) -> Capabilities {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::Result;
     use crate::http::auth::Auth;
-    use crate::http::transport::{Canned, FakeTransport};
+    use crate::http::transport::{Canned, FakeTransport, HttpRequest, Response, Transport};
+    use futures::future::BoxFuture;
     use http::Method;
     use std::sync::Arc;
 
@@ -306,5 +323,54 @@ mod tests {
             c.capabilities().await.unwrap();
         }
         assert_eq!(t.call_count(), 2, "one probe of each endpoint, cached thereafter");
+    }
+
+    /// A transport that suspends mid-request, wrapping a [`FakeTransport`].
+    ///
+    /// **Do not simplify this back to a plain `FakeTransport`** — doing so silently disarms the
+    /// test below. `FakeTransport` resolves without ever returning `Pending`, so under `join!`
+    /// the first branch runs its entire probe, cache fill included, during the very first poll,
+    /// and every later branch then finds a warm cache. Such a test reports "probed once"
+    /// whether or not the single-flight gate exists: it is exactly the blind spot that let
+    /// duplicate probing survive in a suite already full of call-count assertions. One yield is
+    /// enough to reproduce what a real socket does — leave the winner suspended while the cache
+    /// is still empty, so the losers are polled into the same cold miss.
+    struct Yielding(Arc<FakeTransport>);
+
+    impl Transport for Yielding {
+        fn execute(&self, req: HttpRequest) -> BoxFuture<'_, Result<Response>> {
+            Box::pin(async move {
+                tokio::task::yield_now().await;
+                self.0.execute(req).await
+            })
+        }
+    }
+
+    /// `fcli status` fans out into four concurrent [`crate::http::paginate`] walks, and each one
+    /// asks for capabilities before its first request. Without a single-flight gate all four
+    /// miss the cold cache and all four probe, spending eight requests on what two answer — a
+    /// cost that grows with every command that learns to overlap its reads.
+    #[tokio::test]
+    async fn concurrent_first_calls_probe_once_not_once_each() {
+        let fake = Arc::new(
+            FakeTransport::new()
+                .on(Method::GET, "/api/v1/settings/api", Canned::json(200, SETTINGS))
+                .on(Method::GET, "/api/v1/nodeinfo", Canned::json(200, NODEINFO)),
+        );
+        let c = Client::builder("https://git.example.org", Auth::None)
+            .transport(Arc::new(Yielding(fake.clone())))
+            .build()
+            .unwrap();
+
+        let (a, b, d, e) =
+            futures::join!(c.capabilities(), c.capabilities(), c.capabilities(), c.capabilities());
+        for caps in [a, b, d, e] {
+            assert_eq!(caps.unwrap().max_response_items, 50, "every caller gets the real answer");
+        }
+        assert_eq!(
+            fake.call_count(),
+            2,
+            "four concurrent callers must share one probe, not run one probe each"
+        );
     }
 }

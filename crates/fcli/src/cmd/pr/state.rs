@@ -319,29 +319,60 @@ pub fn run_edit(globals: &GlobalOpts, args: &EditArgs) -> Result<()> {
         if let Some(base) = &args.base {
             body.insert("base".to_owned(), Value::String(base.clone()));
         }
-        if let Some(title) = &args.milestone {
-            let id = if title.trim().is_empty() {
-                0
-            } else {
-                common::milestone_id(&api, &found.slug, title).await?
-            };
-            body.insert("milestone".to_owned(), Value::from(id));
-        }
-
-        if !args.add_label.is_empty() || !args.remove_label.is_empty() {
+        // The milestone title, the label names and the `@me` assignees are three independent
+        // read-only lookups made before the patch is sent, so they run at the same time.
+        //
+        // `join!` with a fixed unwrap order rather than `try_join!`: today a bad milestone title
+        // always beats a bad label name because the milestone was looked up first, and
+        // `try_join!` returns the first error to *occur* — so `-m nope -l nope` would report a
+        // different problem depending on which response arrived first.
+        //
+        // The `--add-assignee @me --remove-assignee @me` pair is joined too: it was two identical
+        // `GET /user` requests, one after the other, for one answer.
+        let resolve_milestone = async {
+            match &args.milestone {
+                None => Ok(None),
+                Some(title) if title.trim().is_empty() => Ok(Some(0)),
+                Some(title) => common::milestone_id(&api, &found.slug, title).await.map(Some),
+            }
+        };
+        let resolve_labels = async {
+            if args.add_label.is_empty() && args.remove_label.is_empty() {
+                return Ok(None);
+            }
             let names = mutate(
                 found.pr.labels.iter().map(|l| l.name.clone()).collect(),
                 &args.add_label,
                 &args.remove_label,
             );
-            let ids = common::label_ids(&api, &found.slug, &names).await?;
+            common::label_ids(&api, &found.slug, &names).await.map(Some)
+        };
+        let resolve_assignees = async {
+            if args.add_assignee.is_empty() && args.remove_assignee.is_empty() {
+                return Ok::<_, Error>(None);
+            }
+            let (add, remove) = futures::join!(
+                support::resolve_me(&api, &args.add_assignee),
+                support::resolve_me(&api, &args.remove_assignee)
+            );
+            let names = mutate(
+                found.pr.assignees.iter().map(|u| u.login.clone()).collect(),
+                &add?,
+                &remove?,
+            );
+            Ok(Some(names))
+        };
+        let resolved = futures::join!(resolve_milestone, resolve_labels, resolve_assignees);
+
+        // Inserted in the order the serial version inserted them, so the patch body is
+        // byte-identical.
+        if let Some(id) = resolved.0? {
+            body.insert("milestone".to_owned(), Value::from(id));
+        }
+        if let Some(ids) = resolved.1? {
             body.insert("labels".to_owned(), Value::from(ids));
         }
-        if !args.add_assignee.is_empty() || !args.remove_assignee.is_empty() {
-            let add = support::resolve_me(&api, &args.add_assignee).await?;
-            let remove = support::resolve_me(&api, &args.remove_assignee).await?;
-            let names =
-                mutate(found.pr.assignees.iter().map(|u| u.login.clone()).collect(), &add, &remove);
+        if let Some(names) = resolved.2? {
             body.insert("assignees".to_owned(), Value::from(names));
         }
 

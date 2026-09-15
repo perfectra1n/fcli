@@ -368,14 +368,7 @@ async fn sync(rt: &Runtime, api: &Api, slug: &RepoSlug, args: &SyncArgs) -> Resu
     // Which endpoints apply is a property of the repository, so read it first rather than making
     // the user know. `mirror-sync` on a repository that is not a pull mirror is an error, and
     // `push_mirrors-sync` on one with no push mirrors does nothing quietly.
-    let repo: Repository = api.repo().get(&slug.owner, &slug.name).await.map_err(explain)?;
-    let mirrors = api
-        .repo()
-        .list_push_mirrors(&slug.owner, &slug.name, &Default::default())
-        .take(1)
-        .collect::<Vec<_>>()
-        .await;
-    let has_push = mirrors.first().is_some_and(std::result::Result::is_ok);
+    let (repo, has_push) = sync_state(api, slug).await?;
 
     let do_pull = args.pull || (!args.push && repo.mirror);
     let do_push = args.push || (!args.pull && has_push);
@@ -416,8 +409,7 @@ async fn sync(rt: &Runtime, api: &Api, slug: &RepoSlug, args: &SyncArgs) -> Resu
 // ------------------------------------------------------------------------------------ status
 
 async fn status(rt: &Runtime, api: &Api, globals: &GlobalOpts, slug: &RepoSlug) -> Result<()> {
-    let repo: Repository = api.repo().get(&slug.owner, &slug.name).await.map_err(explain)?;
-    let mirrors = fetch(api, globals, slug).await?;
+    let (repo, mirrors) = status_state(api, globals, slug).await?;
 
     if let Some(m) = Machine::compile(globals, MIRROR_FIELDS)? {
         return m.write(globals, rt.term(), porcelain::json_of(&mirrors)?);
@@ -501,6 +493,51 @@ pub(crate) fn render_status(
 
 // ------------------------------------------------------------------------------------ shared
 
+/// The repository and whether it has any push mirror, concurrently.
+///
+/// `join!` rather than `try_join!`, and this one is not a preference: the mirror listing is
+/// *allowed* to fail — a non-`Ok` first item is read below as "no push mirrors", which is how an
+/// instance with `ALLOW_PUSH_MIRRORS = false` still gets a working `mirror sync --pull`.
+/// `try_join!` would turn that tolerated failure into a hard abort. `repo` is unwrapped first,
+/// through [`explain`], so the error precedence is the serial version's.
+///
+/// Split out from [`sync`] so a `FakeTransport` test can assert both requests without a
+/// [`Runtime`].
+async fn sync_state(api: &Api, slug: &RepoSlug) -> Result<(Repository, bool)> {
+    let query = forgejo_client::query::RepoListPushMirrorsQuery::default();
+    // Bound rather than called inline: `api.repo()` returns a borrow of `api`, and a temporary of
+    // it does not outlive the `join!` that awaits both futures.
+    let repos = api.repo();
+    let (repo, mirrors) = futures::join!(
+        repos.get(&slug.owner, &slug.name),
+        repos.list_push_mirrors(&slug.owner, &slug.name, &query).take(1).collect::<Vec<_>>(),
+    );
+    let repo: Repository = repo.map_err(explain)?;
+    Ok((repo, mirrors.first().is_some_and(std::result::Result::is_ok)))
+}
+
+/// The repository and its push mirrors, concurrently.
+///
+/// `join!` rather than `try_join!` for the same reason as everywhere else in this build: the
+/// error a user is shown must not depend on which request the network answered first. `repo` is
+/// unwrapped before `mirrors`, which is the order the serial version reported them in.
+///
+/// Split out from [`status`] so a `FakeTransport` test can assert both requests without a
+/// [`Runtime`].
+async fn status_state(
+    api: &Api,
+    globals: &GlobalOpts,
+    slug: &RepoSlug,
+) -> Result<(Repository, Vec<PushMirror>)> {
+    // Bound rather than called inline: `api.repo()` returns a borrow of `api`, and a temporary of
+    // it does not outlive the `join!` that awaits both futures.
+    let repos = api.repo();
+    let (repo, mirrors) =
+        futures::join!(repos.get(&slug.owner, &slug.name), fetch(api, globals, slug));
+    let repo: Repository = repo.map_err(explain)?;
+    Ok((repo, mirrors?))
+}
+
 async fn fetch(api: &Api, globals: &GlobalOpts, slug: &RepoSlug) -> Result<Vec<PushMirror>> {
     let query = forgejo_client::query::RepoListPushMirrorsQuery::default();
     let take = porcelain::item_limit(globals).unwrap_or(usize::MAX);
@@ -560,6 +597,102 @@ mod tests {
 
     fn mirrors() -> Vec<PushMirror> {
         serde_json::from_str(MIRRORS).expect("the fixture is valid PushMirror JSON")
+    }
+
+    /// How many times the repository and the push-mirror listing were asked for.
+    fn requests(t: &FakeTransport) -> (usize, usize) {
+        let get = testing::method("GET");
+        (
+            t.calls_to(&get, "/api/v1/repos/them/proj").len(),
+            t.calls_to(&get, "/api/v1/repos/them/proj/push_mirrors").len(),
+        )
+    }
+
+    /// Bug this prevents: `sync` deciding which endpoints apply from two *serial* reads, and then
+    /// — having overlapped them — a failing push-mirror listing aborting the whole command.
+    /// A non-`Ok` first item is "no push mirrors", which is how an instance with push mirroring
+    /// switched off still gets a working `mirror sync --pull`; `try_join!` would have turned that
+    /// tolerated failure into a hard error.
+    #[tokio::test]
+    async fn sync_reads_the_repository_and_the_mirror_list_and_tolerates_the_list_failing() {
+        let both = Arc::new(
+            FakeTransport::new()
+                .on(
+                    testing::method("GET"),
+                    "/api/v1/repos/them/proj",
+                    Canned::json(200, r#"{"full_name":"them/proj","name":"proj","mirror":true}"#),
+                )
+                .on(
+                    testing::method("GET"),
+                    "/api/v1/repos/them/proj/push_mirrors",
+                    testing::one_page(MIRRORS),
+                ),
+        );
+        let slug = RepoSlug::new("them", "proj");
+        let (repo, has_push) = sync_state(&testing::api(both.clone()), &slug).await.expect("sync");
+        assert!(repo.mirror);
+        assert!(has_push);
+        // Counted per path rather than with `call_count`: the paginator's one-off capability
+        // probe (`/settings/api`, `/nodeinfo`) is cached on the client and is not this command's
+        // cost, so counting every recorded call would measure the wrong thing.
+        assert_eq!(requests(&both), (1, 1), "{:?}", both.calls());
+
+        // The listing 404s — this instance has push mirroring switched off — and the pull mirror
+        // is still syncable.
+        let pull_only = Arc::new(
+            FakeTransport::new()
+                .on(
+                    testing::method("GET"),
+                    "/api/v1/repos/them/proj",
+                    Canned::json(200, r#"{"full_name":"them/proj","name":"proj","mirror":true}"#),
+                )
+                .fallback(Canned::json(404, r#"{"message":"Not Found"}"#)),
+        );
+        let (repo, has_push) =
+            sync_state(&testing::api(pull_only.clone()), &slug).await.expect("sync");
+        assert!(repo.mirror);
+        assert!(!has_push, "a failing listing is 'no push mirrors', not an error");
+        assert_eq!(requests(&pull_only), (1, 1), "{:?}", pull_only.calls());
+    }
+
+    /// Bug this prevents: `status`'s two independent reads staying serial, and the error the user
+    /// sees depending on which one the network answered first. The repository is unwrapped before
+    /// the mirrors, which is the order the serial version reported them in.
+    #[tokio::test]
+    async fn status_reads_the_repository_and_its_mirrors_and_keeps_the_repositorys_error_first() {
+        let fake = Arc::new(
+            FakeTransport::new()
+                .on(
+                    testing::method("GET"),
+                    "/api/v1/repos/them/proj",
+                    Canned::json(200, r#"{"full_name":"them/proj","name":"proj"}"#),
+                )
+                .on(
+                    testing::method("GET"),
+                    "/api/v1/repos/them/proj/push_mirrors",
+                    testing::one_page(MIRRORS),
+                ),
+        );
+        let globals = GlobalOpts::default();
+        let slug = RepoSlug::new("them", "proj");
+        let (repo, mirrors) =
+            status_state(&testing::api(fake.clone()), &globals, &slug).await.expect("status");
+        assert_eq!(repo.full_name, "them/proj");
+        assert_eq!(mirrors.len(), 2);
+        assert_eq!(requests(&fake), (1, 1), "{:?}", fake.calls());
+
+        // Both fail; the repository's error is the one reported, whichever arrived first.
+        let broken = Arc::new(
+            FakeTransport::new()
+                .on(
+                    testing::method("GET"),
+                    "/api/v1/repos/them/proj",
+                    Canned::json(500, r#"{"message":"boom"}"#),
+                )
+                .fallback(Canned::json(403, r#"{"message":"token does not have scope"}"#)),
+        );
+        let e = status_state(&testing::api(broken), &globals, &slug).await.unwrap_err();
+        assert!(matches!(e.kind(), ErrorKind::ServerError { .. }), "{e:?}");
     }
 
     /// Bug this prevents: `add` putting the branch filter, the interval, or `use_ssh` in the wrong

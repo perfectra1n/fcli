@@ -139,13 +139,8 @@ pub fn run_status(globals: &GlobalOpts, args: &StatusArgs) -> Result<()> {
         let api = support::api(&rt);
         let found = common::find(&rt, globals, &api, args.pr.as_deref()).await?;
 
-        // The checks are best-effort here: `pr status` is a summary, and a repository whose status
-        // endpoint is unavailable should still get the pull request's state and mergeability rather
-        // than an error.
-        let checks = match head_sha(&found.pr) {
-            Some(sha) => combined(&api, &found.slug, &sha).await.ok(),
-            None => None,
-        };
+        let checks =
+            status_for(&api, &found, !matches!(wanted, support::machine::Wanted::Machine(_))).await;
 
         common::emit_or(&rt, globals, &wanted, &found.pr, || {
             let mut out = std::io::stdout().lock();
@@ -177,6 +172,28 @@ pub fn run_status(globals: &GlobalOpts, args: &StatusArgs) -> Result<()> {
             Ok(())
         })
     })
+}
+
+/// The combined status, but only when something is going to print it.
+///
+/// Two rules, both load-bearing:
+///
+/// * Best-effort. `pr status` is a summary, and a repository whose status endpoint is unavailable
+///   should still get the pull request's state and mergeability rather than an error — which is
+///   why this answers `Option` and not `Result`.
+/// * Bug this prevents: `fcli pr status --json state` paying for a status request that only the
+///   human table reads. `emit_or` renders the pull request alone on the machine path, and
+///   `pr status --json` is precisely the shape a script polls in a loop, so that wasted call was
+///   being made once a second.
+///
+/// Takes a bare [`Api`] rather than the [`Runtime`] it comes from, so a `FakeTransport` test can
+/// assert the request this does *not* make without a network or a config file.
+async fn status_for(api: &Api, found: &common::Found, wanted: bool) -> Option<CombinedStatus> {
+    if !wanted {
+        return None;
+    }
+    let sha = head_sha(&found.pr)?;
+    combined(api, &found.slug, &sha).await.ok()
 }
 
 /// The commit the checks are attached to.
@@ -336,6 +353,7 @@ fn summary(status: &CombinedStatus) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cmd::support::testing;
     use forgejo_model::CommitStatusState;
 
     fn check(context: &str, state: &str) -> CommitStatus {
@@ -354,6 +372,41 @@ mod tests {
             statuses: checks,
             ..CombinedStatus::default()
         }
+    }
+
+    /// Bug this prevents — the reported one. `fcli pr status --json state` fetched the combined
+    /// commit status and then threw it away: `emit_or` prints the pull request alone on the
+    /// machine path, and the status only ever reaches the human table. `pr status --json` is
+    /// exactly the shape a script polls in a loop, so that was a wasted request once a second.
+    #[tokio::test]
+    async fn the_machine_path_does_not_fetch_checks_it_will_not_print() {
+        let head = forgejo_model::PrBranchInfo {
+            sha: "deadbeef".to_owned(),
+            ..forgejo_model::PrBranchInfo::default()
+        };
+        let found = common::Found {
+            slug: RepoSlug::new("them", "proj"),
+            pr: forgejo_model::PullRequest {
+                number: forgejo_core::types::ids::IssueIndex::new(42),
+                head: Some(head),
+                ..forgejo_model::PullRequest::default()
+            },
+        };
+        let fake = std::sync::Arc::new(testing::on(
+            testing::transport(),
+            "GET",
+            "/api/v1/repos/them/proj/commits/deadbeef/status",
+            forgejo_core::http::transport::Canned::json(200, r#"{"sha":"deadbeef","statuses":[]}"#),
+        ));
+        let api = testing::api_at(testing::EXAMPLE, fake.clone());
+
+        assert!(status_for(&api, &found, false).await.is_none());
+        assert_eq!(fake.call_count(), 0, "--json must not pay for checks: {:?}", fake.calls());
+
+        // ...and the human table still gets them, in one request.
+        assert!(status_for(&api, &found, true).await.is_some());
+        assert_eq!(fake.call_count(), 1);
+        assert_eq!(fake.calls()[0].path, "/api/v1/repos/them/proj/commits/deadbeef/status");
     }
 
     /// **The exit-code test.** `gh pr checks` exits 8 while checks are running, and every wrapper

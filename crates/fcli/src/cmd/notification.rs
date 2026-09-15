@@ -163,12 +163,51 @@ async fn list(rt: &Runtime, globals: &GlobalOpts, api: &Api, args: &ListArgs) ->
         // After printing, and one thread at a time by id: `PUT /notifications` would also mark
         // threads that arrived *between* the listing and now, which is exactly how a notification
         // is lost. Only what the user just saw is marked.
-        for n in &threads {
-            api.notify().read_thread(n.id, &to_status("read")).await?;
-        }
+        //
+        // Concurrently, but still one PATCH per listed id, so that guarantee is untouched — the
+        // set of threads is still exactly the set that was printed. A default listing is 30
+        // threads, and 30 serial round trips against a self-hosted instance across a WAN is the
+        // whole cost of the flag.
+        //
+        // `buffered`, never `buffer_unordered`: with the unordered form the error that surfaces is
+        // whichever request *finished* first, which is nondeterministic run to run. `buffered`
+        // yields in input order, so the reported failure is the first listed thread that refused —
+        // the same one the sequential loop reported.
+        mark_each(api, threads.iter().map(|n| n.id), "read").await?;
         support::note(rt.term(), &format!("marked {} thread(s) read", threads.len()));
     }
     Ok(())
+}
+
+/// How wide to fan the per-thread PATCHes.
+///
+/// Not unbounded: a self-hosted Forgejo behind a small proxy rate-limits a wide burst, and then the
+/// retry layer spends back everything the concurrency won.
+const MARK_CONCURRENCY: usize = 6;
+
+/// `PATCH /notifications/threads/{id}` for each id, [`MARK_CONCURRENCY`] in flight.
+///
+/// One request per id by design — see the call sites for why the collection routes are not used.
+///
+/// Behaviour worth knowing when one of them refuses: sequentially, nothing after the first failure
+/// was attempted. Here up to `MARK_CONCURRENCY - 1` later ids may already have been marked when the
+/// error surfaces. That is benign for *this* operation — the route is idempotent and the gesture is
+/// "mark these read" — but it is a real difference from a `for` loop, and would not be acceptable
+/// for a mutation that cannot be repeated.
+async fn mark_each(
+    api: &Api,
+    ids: impl Iterator<Item = i64>,
+    status: &str,
+) -> Result<Vec<NotificationThread>> {
+    // Both hoisted out of the closure: `Notify<'_>` and the query borrow, and a temporary built
+    // per item would not outlive the future that reads it.
+    let notify = api.notify();
+    let q = to_status(status);
+    futures::stream::iter(ids)
+        .map(|id| notify.read_thread(id, &q))
+        .buffered(MARK_CONCURRENCY)
+        .try_collect()
+        .await
 }
 
 /// `-s/--state` wins over `-a/--all`, and `--all` means "every state".
@@ -191,9 +230,10 @@ async fn mark(
     status: &str,
 ) -> Result<()> {
     if !args.ids.is_empty() {
-        for id in &args.ids {
-            api.notify().read_thread(*id, &to_status(status)).await?;
-        }
+        // Named ids get one PATCH each — the collection route below would act on the whole inbox,
+        // which is not what naming ids means. Concurrently, for the same reason as `--mark-read`:
+        // `fcli notification read 1 2 3 … ` is otherwise one round trip per argument.
+        mark_each(api, args.ids.iter().copied(), status).await?;
         support::note(rt.term(), &format!("marked {} thread(s) {status}", args.ids.len()));
         return Ok(());
     }
@@ -360,6 +400,63 @@ mod tests {
             "the collection route must not be used: {:?}",
             fake.calls()
         );
+    }
+
+    /// Bug this prevents: a botched fan-out marking only the first `MARK_CONCURRENCY` threads and
+    /// still printing "marked 20 thread(s) read". The summary would be a lie the user only
+    /// discovers the next time the inbox comes back fuller than it should be, so the property
+    /// under test is that *every* listed id gets its own PATCH.
+    #[tokio::test]
+    async fn every_listed_thread_is_marked_even_though_the_requests_overlap() {
+        // 20: comfortably more than `MARK_CONCURRENCY`, and not a multiple of it, so a
+        // dropped tail would show up.
+        let ids: Vec<i64> = (1..=20).collect();
+        let fake = Arc::new(FakeTransport::new().fallback(Canned::json(200, r#"{"id":0}"#)));
+        let api = api_for(fake.clone());
+
+        let marked = mark_each(&api, ids.iter().copied(), "read").await.unwrap();
+        assert_eq!(marked.len(), ids.len(), "every id must be answered for, not just awaited");
+
+        // Matched on the path, never by index: `buffered` has six requests in flight, so the order
+        // they reach the transport is not the order they were queued. `fake.calls()[0]` here would
+        // be a flake rather than an honest failure.
+        let mut seen: Vec<i64> = fake
+            .calls()
+            .iter()
+            .map(|c| {
+                let rest = c
+                    .path
+                    .strip_prefix("/api/v1/notifications/threads/")
+                    .unwrap_or_else(|| panic!("the collection route must not be used: {}", c.path));
+                assert_eq!(c.query, "to-status=read", "{}", c.path);
+                rest.parse().expect("the id is the last path segment")
+            })
+            .collect();
+        seen.sort_unstable();
+        assert_eq!(seen, ids);
+        assert_eq!(fake.call_count(), ids.len(), "one PATCH per id, and nothing else");
+    }
+
+    /// Bug this prevents: the concurrent fan-out swallowing a refusal. A thread the server would
+    /// not mark has to fail the command exactly as the sequential loop did — `--mark-read` is
+    /// still allowed to report the inbox it could not clear.
+    ///
+    /// The surviving difference, which is deliberate: the ids after the failure are no longer
+    /// guaranteed untouched, because up to `MARK_CONCURRENCY - 1` of them were already in flight.
+    /// `PATCH …?to-status=read` is idempotent, so a retry costs nothing.
+    #[tokio::test]
+    async fn a_thread_the_server_refuses_still_fails_the_command() {
+        let fake = Arc::new(
+            FakeTransport::new()
+                .on(
+                    "PATCH".parse().unwrap(),
+                    "/api/v1/notifications/threads/3",
+                    Canned::json(403, r#"{"message":"write:notification required"}"#),
+                )
+                .fallback(Canned::json(200, r#"{"id":0}"#)),
+        );
+        let api = api_for(fake.clone());
+        assert!(mark_each(&api, 1..=8, "read").await.is_err());
     }
 
     #[test]

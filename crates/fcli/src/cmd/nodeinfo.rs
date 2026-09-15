@@ -132,15 +132,41 @@ fn connect(globals: &GlobalOpts) -> Result<(Client, Term, String)> {
 // ---------------------------------------------------------------------------------- overview
 
 async fn overview(api: &Api, globals: &GlobalOpts, term: &Term, host: &str) -> Result<()> {
-    let info = api.misc().get_node_info().await.map_err(explain)?;
+    // Compiled before anything is sent, which `cmd::support::machine` states is the point rather
+    // than an optimisation: `fcli nodeinfo --jq '.bad['` is a typo in an argument, and it must be
+    // reported as one instead of after a round trip to a server that was never at fault.
+    let machine = Machine::compile(globals, NODE_FIELDS)?;
 
-    if let Some(m) = Machine::compile(globals, NODE_FIELDS)? {
+    // The machine view is decided *before* any request, so it still costs exactly one: the
+    // `/settings/api` half exists to fill in the human table, and `--json`/`--jq` select out of
+    // the NodeInfo document alone.
+    if let Some(m) = machine {
+        let info = api.misc().get_node_info().await.map_err(explain)?;
         return m.write(globals, term, porcelain::json_of(&info)?);
     }
 
-    // Fetched only for the human view, and only best-effort: the NodeInfo half already answers
-    // "is this Forgejo", so an instance that guards `/settings/api` still gets a useful answer.
-    let settings = match api.settings().get_general_api_settings().await {
+    // Two independent documents, so two overlapped reads rather than two round trips in a row.
+    //
+    // `join!`, emphatically not `try_join!`: `/settings/api` is *allowed* to fail here — see the
+    // module docs and `capabilities.rs`'s "both endpoints are optional" rule — and `try_join!`
+    // would abandon the NodeInfo half the moment a guarded instance answered 401, turning the note
+    // below into a non-zero exit. Unwrapping in a fixed order afterwards also keeps `/nodeinfo`'s
+    // error the one the user sees, whichever request happened to finish first.
+    //
+    // One difference to know about: sequentially, a `/nodeinfo` that failed meant `/settings/api`
+    // was never asked for. Both now go out, so a wrong URL costs one extra request before the same
+    // error is reported.
+    //
+    // `misc`/`settings` are hoisted into `let`s because each borrows `api` and the future outlives
+    // the temporary an inline call would produce.
+    let (misc, settings_api) = (api.misc(), api.settings());
+    let (info, settings) =
+        futures::join!(misc.get_node_info(), settings_api.get_general_api_settings());
+    let info = info.map_err(explain)?;
+
+    // Best-effort: the NodeInfo half already answers "is this Forgejo", so an instance that guards
+    // `/settings/api` still gets a useful answer.
+    let settings = match settings {
         Ok(s) => Some(s),
         Err(e) => {
             porcelain::note(
@@ -446,6 +472,94 @@ mod tests {
         // The view renders without the settings half, and says the limits are unknown rather than
         // inventing a number.
         let out = render_overview(&testing::term(), "git.example.org", &ni, None);
+        assert!(out.contains("api limits    unknown"), "{out}");
+    }
+
+    /// Everything `overview` writes goes to a file, so a test can call it without a snapshot of
+    /// stdout being at stake — what is under test here is which requests it sends, not what it
+    /// prints.
+    fn to_file(extra: GlobalOpts) -> (GlobalOpts, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("a writable temporary directory");
+        (GlobalOpts { output: Some(dir.path().join("out")), ..extra }, dir)
+    }
+
+    fn both_documents() -> Arc<FakeTransport> {
+        Arc::new(
+            FakeTransport::new()
+                .on(testing::method("GET"), "/api/v1/nodeinfo", Canned::json(200, NODEINFO))
+                .on(testing::method("GET"), "/api/v1/settings/api", Canned::json(200, SETTINGS))
+                .fallback(Canned::json(404, r#"{"message":"no"}"#)),
+        )
+    }
+
+    /// Bug this prevents: spending a round trip before reporting a typo in `--jq`. `machine.rs`
+    /// states the rule — a bad expression is a usage error, and it has to land *before* anything
+    /// is sent, or the user waits on a server that was never at fault to be told they mistyped.
+    #[tokio::test]
+    async fn a_bad_jq_expression_is_reported_before_any_request_is_sent() {
+        let fake = both_documents();
+        let api = testing::api(fake.clone());
+        let (globals, _dir) =
+            to_file(GlobalOpts { jq: Some(".bad[".into()), ..Default::default() });
+
+        assert!(overview(&api, &globals, &testing::term(), "git.example.org").await.is_err());
+        assert_eq!(
+            fake.call_count(),
+            0,
+            "nothing should have gone to the wire: {:?}",
+            fake.calls()
+        );
+    }
+
+    /// Bug this prevents: `--json` paying for the human-only half of the view. `/settings/api`
+    /// fills in a table nobody is rendering on the machine path, and a script that polls
+    /// `fcli nodeinfo --json software` should not double its request count for it.
+    #[tokio::test]
+    async fn the_machine_view_reads_only_nodeinfo() {
+        let fake = both_documents();
+        let api = testing::api(fake.clone());
+        let (globals, _dir) =
+            to_file(GlobalOpts { json: Some("software".into()), ..Default::default() });
+
+        overview(&api, &globals, &testing::term(), "git.example.org").await.unwrap();
+        assert_eq!(fake.calls_to(&testing::method("GET"), "/api/v1/settings/api").len(), 0);
+        assert_eq!(fake.call_count(), 1, "{:?}", fake.calls());
+    }
+
+    /// The human view is two documents, and both are requested. Asserted as a *set*, not a
+    /// sequence: they are joined, so which one the transport sees first is not fixed and an
+    /// index-based assertion here would go flaky instead of failing honestly.
+    #[tokio::test]
+    async fn the_human_view_reads_both_documents_once_each() {
+        let fake = both_documents();
+        let api = testing::api(fake.clone());
+        let (globals, _dir) = to_file(GlobalOpts::default());
+
+        overview(&api, &globals, &testing::term(), "git.example.org").await.unwrap();
+        assert_eq!(fake.calls_to(&testing::method("GET"), "/api/v1/nodeinfo").len(), 1);
+        assert_eq!(fake.calls_to(&testing::method("GET"), "/api/v1/settings/api").len(), 1);
+        assert_eq!(fake.call_count(), 2, "{:?}", fake.calls());
+    }
+
+    /// Bug this prevents: joining the two reads with `try_join!`, which abandons the whole command
+    /// the moment `/settings/api` answers 401 — turning the note this module promises into a
+    /// non-zero exit. `join!` drives both arms to completion and lets the settings half be `None`.
+    #[tokio::test]
+    async fn a_guarded_settings_endpoint_does_not_fail_the_joined_overview() {
+        let fake = Arc::new(
+            FakeTransport::new()
+                .on(testing::method("GET"), "/api/v1/nodeinfo", Canned::json(200, NODEINFO))
+                .on(
+                    testing::method("GET"),
+                    "/api/v1/settings/api",
+                    Canned::json(401, r#"{"message":"token required"}"#),
+                ),
+        );
+        let api = testing::api(fake.clone());
+        let (globals, dir) = to_file(GlobalOpts::default());
+
+        overview(&api, &globals, &testing::term(), "git.example.org").await.unwrap();
+        let out = std::fs::read_to_string(dir.path().join("out")).unwrap();
         assert!(out.contains("api limits    unknown"), "{out}");
     }
 

@@ -47,6 +47,13 @@ use crate::cmd::support::listing::{self as emit, Fields, Listing};
 const STATUSES: &[&str] =
     &["unknown", "waiting", "running", "success", "failure", "cancelled", "skipped", "blocked"];
 
+/// How many job logs [`print_logs`] fetches at once.
+///
+/// Bounded rather than "one per job": a matrix build has dozens of jobs, and an unbounded burst
+/// against a self-hosted instance behind a reverse proxy trips its rate limit — after which
+/// `forgejo_core::http`'s retry layer spends the whole win back in backoff.
+const LOG_CONCURRENCY: usize = 6;
+
 #[derive(Debug, ClapArgs)]
 pub struct Args {
     #[command(subcommand)]
@@ -294,18 +301,24 @@ async fn fetch_runs(
 
 async fn view(rt: &Runtime, globals: &GlobalOpts, api: &Api, args: &ViewArgs) -> Result<()> {
     let slug = slug(rt, globals)?;
-    let run = api.run().view(&slug.owner, &slug.name, args.run.get()).await?;
 
+    // `--web` is settled before anything overlaps, because it needs the run's URL and nothing
+    // else: opening a browser tab should not also cost a job listing that is never read. Same
+    // discipline `repo view` applies to its README.
     if args.web {
+        let run = api.run().view(&slug.owner, &slug.name, args.run.get()).await?;
         return open_url(rt, &run.html_url);
     }
+
+    // Every remaining path needs both, and the two reads are independent — the jobs are keyed on
+    // the run id the caller already typed, not on anything the run object carries.
+    let (run, jobs) = fetch_view(api, slug, args.run).await?;
+
     if args.log || args.log_failed {
-        let jobs = api.run().jobs(&slug.owner, &slug.name, args.run.get()).await?;
         print_logs(rt, globals, api, slug, &jobs, args.job, args.log_failed).await?;
         return exit_status(args.exit_status, &run);
     }
 
-    let jobs = api.run().jobs(&slug.owner, &slug.name, args.run.get()).await?;
     let mut rows = vec![
         ("title".to_owned(), run.title.clone()),
         ("status".to_owned(), color::autocolor(rt.term(), &run.status)),
@@ -442,22 +455,69 @@ async fn print_logs(
         )));
     }
 
+    let logs = fetch_logs(api, slug, &wanted).await?;
+
     let mut out = String::new();
-    for job in wanted {
-        let q = query::RepoGetActionJobLogsQuery::default();
-        let text =
-            api.repo().get_action_job_logs(&slug.owner, &slug.name, job.id.get(), &q).await?;
+    for (job, text) in wanted.iter().zip(&logs) {
         // A header per job, because a concatenation with no separators is unreadable once a run
         // has three jobs. Prefixed with `==>` like `tail -f` on several files.
         if jobs.len() > 1 {
             out.push_str(&format!("==> {} (job {}, {})\n", job.name, job.id, job.status));
         }
-        out.push_str(&text);
+        out.push_str(text);
         if !text.ends_with('\n') {
             out.push('\n');
         }
     }
     emit::text(rt, globals, &out)
+}
+
+/// The run and its jobs, concurrently.
+///
+/// `join!` rather than `try_join!` — and then unwrapped in a fixed order. `try_join!` returns
+/// whichever error *arrived* first, so a run that is both gone and unreadable would report a
+/// different reason depending on the network; unwrapping `run` first keeps the message the
+/// serial version gave. Split out from [`view`] so a `FakeTransport` test can assert both
+/// requests without a [`Runtime`].
+async fn fetch_view(
+    api: &Api,
+    slug: &RepoSlug,
+    run_id: RunId,
+) -> Result<(ActionRun, Vec<ActionRunJob>)> {
+    // Bound rather than called twice inline: `api.run()` returns a borrow of `api`, and a
+    // temporary of it does not outlive the `join!` that awaits both futures.
+    let runs = api.run();
+    let (run, jobs) = futures::join!(
+        runs.view(&slug.owner, &slug.name, run_id.get()),
+        runs.jobs(&slug.owner, &slug.name, run_id.get()),
+    );
+    Ok((run?, jobs?))
+}
+
+/// Every wanted job's log, [`LOG_CONCURRENCY`] at a time, **in `wanted` order**.
+///
+/// Nothing is printed as the logs arrive — [`print_logs`] assembles one string and emits it once
+/// — so the serial version was N round trips of pure waiting before a single byte could appear.
+/// A twelve-job matrix build paid twelve of them, and these are large bodies, so the transfer
+/// overlaps too and not merely the latency.
+///
+/// `buffered` rather than `buffer_unordered`: the logs are zipped straight back onto `wanted` to
+/// build the output, and an unordered stream would file each job's log under a different job's
+/// `==>` header. Peak memory is unchanged — the assembled string already held every log by the
+/// end of the loop this replaced; it is only reached sooner.
+async fn fetch_logs(api: &Api, slug: &RepoSlug, wanted: &[&ActionRunJob]) -> Result<Vec<String>> {
+    let q = query::RepoGetActionJobLogsQuery::default();
+    // Both bound outside the closure: they are borrows of `api`, and a temporary of either would
+    // be dropped before the futures the stream holds are polled.
+    let repo = api.repo();
+    futures::stream::iter(
+        wanted
+            .iter()
+            .map(|job| repo.get_action_job_logs(&slug.owner, &slug.name, job.id.get(), &q)),
+    )
+    .buffered(LOG_CONCURRENCY)
+    .try_collect()
+    .await
 }
 
 // ------------------------------------------------------------------------------------ watch
@@ -967,6 +1027,76 @@ mod tests {
         let m = Harness::try_parse_from(["fcli", "watch", "1"]).unwrap();
         let Cmd::Watch(w) = m.cmd else { panic!("watch") };
         assert_eq!(w.interval, 3);
+    }
+
+    /// Bug this prevents: `run view` growing a second round trip for the jobs it was always going
+    /// to ask for. The run and its jobs are keyed only on the id the caller typed, so they
+    /// overlap — and both must still be requested exactly once, because the collapsed branch used
+    /// to spell the same `jobs` call twice.
+    #[tokio::test]
+    async fn view_asks_for_the_run_and_its_jobs_exactly_once_each() {
+        let fake = Arc::new(
+            FakeTransport::new()
+                .on(
+                    "GET".parse().unwrap(),
+                    "/api/v1/repos/o/r/actions/runs/7",
+                    Canned::json(200, r#"{"id":7,"title":"CI"}"#),
+                )
+                .on(
+                    "GET".parse().unwrap(),
+                    "/api/v1/repos/o/r/actions/runs/7/jobs",
+                    Canned::json(200, r#"[{"id":11,"name":"build"}]"#),
+                ),
+        );
+        let (run, jobs) =
+            fetch_view(&api_for(fake.clone()), &RepoSlug::new("o", "r"), RunId::new(7))
+                .await
+                .unwrap();
+        assert_eq!(run.id.get(), 7);
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(fake.call_count(), 2, "{:?}", fake.calls());
+        let get = "GET".parse().unwrap();
+        assert_eq!(fake.calls_to(&get, "/api/v1/repos/o/r/actions/runs/7").len(), 1);
+        assert_eq!(fake.calls_to(&get, "/api/v1/repos/o/r/actions/runs/7/jobs").len(), 1);
+    }
+
+    /// Bug this prevents: a twelve-job matrix build costing twelve serial round trips for output
+    /// that is assembled into one string and printed once — and then, having overlapped them, each
+    /// job's log landing under a *different* job's `==>` header.
+    ///
+    /// The count is the assertion with teeth: one request per wanted job and no more. The pairing
+    /// cannot fail against a `FakeTransport`, which resolves without ever returning `Pending`, so
+    /// it is asserted for the record rather than as a trap.
+    #[tokio::test]
+    async fn every_jobs_log_is_fetched_once_and_stays_in_job_order() {
+        let fake = Arc::new(
+            FakeTransport::new()
+                .on(
+                    "GET".parse().unwrap(),
+                    "/api/v1/repos/o/r/actions/jobs/11/logs",
+                    Canned::text(200, "first job\n"),
+                )
+                .on(
+                    "GET".parse().unwrap(),
+                    "/api/v1/repos/o/r/actions/jobs/12/logs",
+                    Canned::text(200, "second job\n"),
+                )
+                .on(
+                    "GET".parse().unwrap(),
+                    "/api/v1/repos/o/r/actions/jobs/13/logs",
+                    Canned::text(200, "third job\n"),
+                ),
+        );
+        let jobs = [
+            ActionRunJob { id: JobId::new(11), name: "build".into(), ..Default::default() },
+            ActionRunJob { id: JobId::new(12), name: "test".into(), ..Default::default() },
+            ActionRunJob { id: JobId::new(13), name: "lint".into(), ..Default::default() },
+        ];
+        let wanted: Vec<&ActionRunJob> = jobs.iter().collect();
+        let logs =
+            fetch_logs(&api_for(fake.clone()), &RepoSlug::new("o", "r"), &wanted).await.unwrap();
+        assert_eq!(logs, ["first job\n", "second job\n", "third job\n"]);
+        assert_eq!(fake.call_count(), wanted.len(), "{:?}", fake.calls());
     }
 
     /// `run logs` must ask for each job's plaintext log rather than the run's zip, and must

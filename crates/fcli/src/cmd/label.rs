@@ -211,22 +211,38 @@ fn scope_of(cx: &Cx, args: &ScopeArgs) -> Result<LabelScope> {
 // ---------------------------------------------------------------------------------- list
 
 async fn list(cx: &Cx, globals: &GlobalOpts, scope: &LabelScope, a: &ListArgs) -> Result<()> {
-    let mut rows: Vec<(String, Label)> = shared::all_labels(&cx.api, scope)
-        .await?
-        .into_iter()
-        .map(|l| (scope_word(scope), l))
-        .collect();
-
-    if a.include_org {
-        // The owner of a personal repository is a user, and `/orgs/{user}/labels` 404s for one.
-        // That is not a failure of `--include-org`, so it is traced and dropped rather than
-        // reported: the user asked for organization labels "as well", not "instead".
+    let mut rows: Vec<(String, Label)> = if a.include_org {
+        // Two independent scope walks, so they run at the same time rather than one after the
+        // other.
+        //
+        // `join!`, never `try_join!`, and that is the whole point: the owner of a personal
+        // repository is a user, and `/orgs/{user}/labels` 404s for one. That is not a failure of
+        // `--include-org` — the user asked for organization labels "as well", not "instead" — so
+        // the org arm is *allowed* to fail and is traced and dropped. `try_join!` would abandon
+        // the repository's labels the moment that tolerated 404 arrived and turn a working
+        // command into a hard error.
         let owner = cx.repo()?.owner.clone();
-        match shared::all_labels(&cx.api, &LabelScope::Org(owner.clone())).await {
+        let org_scope = LabelScope::Org(owner.clone());
+        let (repo, org) = futures::join!(
+            shared::all_labels(&cx.api, scope),
+            shared::all_labels(&cx.api, &org_scope)
+        );
+        // Reassembled repository-first, organization-second, which is the order the serial
+        // version produced and the order the SCOPE column is read in.
+        let mut rows: Vec<(String, Label)> =
+            repo?.into_iter().map(|l| (scope_word(scope), l)).collect();
+        match org {
             Ok(org) => rows.extend(org.into_iter().map(|l| ("org".to_owned(), l))),
             Err(e) => cx.trace(&format!("--include-org: {owner} has no organization labels ({e})")),
         }
-    }
+        rows
+    } else {
+        shared::all_labels(&cx.api, scope)
+            .await?
+            .into_iter()
+            .map(|l| (scope_word(scope), l))
+            .collect()
+    };
 
     // Counted before the cap is applied: `all_labels` walks the whole collection, so the total
     // the banner needs is already here and costs no second request.
@@ -581,6 +597,37 @@ mod tests {
             list(&cx, &globals, &LabelScope::Repo(slug()), &args).await.unwrap();
             assert!(text(&buf).starts_with(expected), "-L {cap}: {}", text(&buf));
         }
+    }
+
+    /// Bug this prevents: `--include-org` reported as a failure when the repository's owner is a
+    /// user. `/orgs/{user}/labels` 404s for one, and `--include-org` means "as well", not
+    /// "instead" — so the two walks run concurrently under `join!` and the organization arm is
+    /// allowed to fail. `try_join!` would abandon the repository's labels the moment the
+    /// tolerated 404 arrived, turning a working command into a hard error.
+    #[tokio::test]
+    async fn include_org_survives_an_owner_that_is_not_an_organization() {
+        let fake = Arc::new(label_routes().on(
+            method!("GET"),
+            "/api/v1/orgs/perf3ct/labels",
+            Canned::json(404, r#"{"message":"user redirect does not exist"}"#),
+        ));
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let globals = GlobalOpts::default();
+        let cx = cx(fake.clone(), &buf, &globals, Term::tty(80));
+        let args = ListArgs { scope: ScopeArgs { org: None }, limit: None, include_org: true };
+
+        list(&cx, &globals, &LabelScope::Repo(slug()), &args).await.unwrap();
+
+        let out = text(&buf);
+        assert!(out.starts_with("Showing 2 labels in perf3ct/fcli\n"), "{out}");
+        assert!(out.contains("SCOPE"), "both scopes were asked for, so the column is shown: {out}");
+        assert!(out.contains("repo"), "the repository's labels must survive the org 404: {out}");
+        // Matched on path, not position: the two walks race, and an index would be flaky.
+        assert!(
+            fake.calls().iter().any(|c| c.path == "/api/v1/orgs/perf3ct/labels"),
+            "the org scope was never walked: {:?}",
+            fake.calls()
+        );
     }
 
     #[tokio::test]

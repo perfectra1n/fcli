@@ -201,6 +201,97 @@ fn auth_status_reports_a_failure_but_exits_zero_under_json() {
     cmd(dir.path()).args(["auth", "status"]).assert().failure();
 }
 
+/// Two hosts that both fail, in a chosen order.
+///
+/// `broken_first` puts the unreachable host at the top of `hosts.toml`. The two failures are
+/// deliberately of *different* kinds so the exit code names which one was reported: the host with
+/// no credential anywhere fails with `NotAuthenticated` (exit 4) without touching the network,
+/// while `localhost:1` — where nothing listens — fails to connect (exit 6).
+///
+/// The reachable-looking host also carries two logins, so the human report has a host whose
+/// stanzas must stay adjacent.
+fn two_failing_hosts(dir: &Path, broken_first: bool) {
+    let no_token = "[[hosts]]\n\
+         name = \"aaa.example.org\"\n\
+         url = \"https://aaa.example.org\"\n\
+         active_login = \"perf3ct\"\n\
+         credential_store = \"file\"\n\
+         \n\
+         [[hosts.logins]]\n\
+         user = \"perf3ct\"\n\
+         scopes = [\"read:repository\"]\n\
+         \n\
+         [[hosts.logins]]\n\
+         user = \"alice\"\n\
+         scopes = [\"read:repository\"]\n";
+    let unreachable = format!(
+        "[[hosts]]\n\
+         name = \"localhost:1\"\n\
+         url = \"http://localhost:1\"\n\
+         active_login = \"bob\"\n\
+         credential_store = \"file\"\n\
+         \n\
+         [[hosts.logins]]\n\
+         user = \"bob\"\n\
+         token = \"{PLANTED_TOKEN}\"\n\
+         scopes = [\"read:repository\"]\n"
+    );
+    let (first, second) = if broken_first {
+        (unreachable.as_str(), no_token)
+    } else {
+        (no_token, unreachable.as_str())
+    };
+    std::fs::write(
+        dir.join("hosts.toml"),
+        format!("active = \"aaa.example.org\"\n\n{first}\n{second}"),
+    )
+    .expect("write hosts.toml");
+}
+
+/// Bug this prevents: the concurrent per-host checks deciding which failure the shell sees.
+///
+/// `auth status` checks every host at once now, because each iteration targets a *different*
+/// server and one decommissioned entry used to burn its whole connect-timeout × retry budget
+/// before the next host was tried. The order of the *results* is still `hosts.toml` order, and two
+/// observable things depend on that: `write_human` opens a new stanza whenever the host changes,
+/// so an interleaved result set prints a host header twice; and the process's error is the first
+/// failing row's, so an interleaved result set hands a script whichever host happened to answer
+/// first. That is precisely what `buffer_unordered` would do and `buffered` does not.
+#[test]
+fn auth_status_reports_the_first_host_in_the_file_when_several_fail() {
+    for (broken_first, expected) in [(false, 4), (true, 6)] {
+        let dir = tmp();
+        two_failing_hosts(dir.path(), broken_first);
+        let out = cmd(dir.path()).args(["auth", "status"]).output().expect("fcli runs");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+
+        // (a) Stanza order follows the file, and each host opens exactly one stanza.
+        let a = stdout.find("aaa.example.org (https://aaa.example.org)").expect(&stdout);
+        let b = stdout.find("localhost:1 (http://localhost:1)").expect(&stdout);
+        assert_eq!(a < b, !broken_first, "stanzas must follow hosts.toml order:\n{stdout}");
+        for header in ["aaa.example.org (https://", "localhost:1 (http://"] {
+            assert_eq!(
+                stdout.matches(header).count(),
+                1,
+                "a host's rows must stay together, or its stanza opens twice:\n{stdout}"
+            );
+        }
+        // Both logins of the multi-login host are reported, in the order the file lists them.
+        let perf3ct = stdout.find("account perf3ct").expect(&stdout);
+        let alice = stdout.find("account alice").expect(&stdout);
+        assert!(perf3ct < alice, "logins must follow the file too:\n{stdout}");
+
+        // (b) The first failing row is the one the exit code comes from: 4 when the host with no
+        // credential leads, 6 when the unreachable one does.
+        assert_eq!(
+            out.status.code(),
+            Some(expected),
+            "broken_first={broken_first}\n{stdout}{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
 /// Bug this prevents: a non-interactive `auth login` hanging on a prompt nobody can answer, or
 /// failing with a message that does not name the flag to use instead.
 #[test]

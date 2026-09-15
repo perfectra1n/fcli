@@ -91,10 +91,12 @@ fn paginate_loses_nothing() {
     seed_issues(&repo, ISSUES);
 
     for query in ["", "?limit=100"] {
+        // `--debug` so the walk reports how many pages it took; see `pages_walked` below.
         let run = inst.fcli([
             "api",
             &format!("repos/{}/issues{query}", repo.slug()),
             "--paginate",
+            "--debug",
             "--jq",
             ".[].number",
         ]);
@@ -113,9 +115,174 @@ fn paginate_loses_nothing() {
         assert_eq!(got.len(), ISSUES, "--paginate '{query}' returned duplicates");
         assert_eq!(got.first().copied(), Some(1));
         assert_eq!(got.last().copied(), Some(ISSUES as u64));
+
+        // The item count alone passed throughout the `?`-collision bug described on
+        // `a_limit_typed_into_the_endpoint_governs_the_page_size` below, because the walk still
+        // terminated correctly on the `Link` header — it simply ignored the limit and used the
+        // server's default page size. The *page* count is what tells the two apart: with
+        // `?limit=100` clamped to `max_response_items` the walk is 2 pages, and with the limit
+        // silently discarded it is 3.
+        assert_eq!(
+            pages_walked(&run),
+            Some(expected_pages(inst, query)),
+            "--paginate '{query}' walked a number of pages that does not match the limit it \
+             was given, so the limit did not reach the server:\n{}",
+            run.stderr
+        );
     }
 }
 
+/// How many pages `--debug` says the walk took.
+///
+/// Read out of the debug summary rather than by counting requests, because there is nowhere to
+/// count requests from outside the process — and the summary is the same line a user would be
+/// shown when diagnosing this by hand.
+fn pages_walked(run: &fcli_itest::Run) -> Option<usize> {
+    let line = run.stderr.lines().find(|l| l.contains("paginate:"))?;
+    let (_, rest) = line.split_once("over ")?;
+    let (n, _) = rest.split_once(" page")?;
+    n.trim().parse().ok()
+}
+
+/// Pages a correct walk of [`ISSUES`] issues takes for a given endpoint query.
+///
+/// `max_response_items` is asked for rather than assumed: it is configurable, the clamp test
+/// above exists precisely because it bites, and a hard-coded 50 here would turn a differently
+/// configured instance into a mystery failure in an unrelated assertion.
+fn expected_pages(inst: &fcli_itest::Instance, query: &str) -> usize {
+    let (_, body) = inst.api("GET", "settings/api", None);
+    let caps: serde_json::Value = serde_json::from_str(&body).expect("settings/api is JSON");
+    let max = caps["max_response_items"].as_u64().expect("max_response_items") as usize;
+    let asked = query.strip_prefix("?limit=").and_then(|n| n.parse::<usize>().ok()).unwrap_or(max);
+    let per_page = asked.min(max);
+    ISSUES.div_ceil(per_page)
+}
+
+/// Bug this prevents, and it shipped: an endpoint typed with its own query became
+/// `Request::path` whole, `?` and all. Nothing downstream looks inside `path` for a query —
+/// `has_query` reads only the structured list — so the paginator's opt-out saw no `limit`, added
+/// its own, and the URL grew a second `?`:
+///
+///     /api/v1/repos/o/r/issues?limit=5?limit=50&page=2
+///
+/// Everything after the first `?` is then one opaque parameter value, so **neither** limit is
+/// honoured and the server falls back to its default page size.
+///
+/// `?limit=5` rather than a limit near the clamp, because the difference has to be unmissable:
+/// against 75 issues a walk that honours it takes 15 pages and a walk that discards it takes 3.
+/// Measured on this container with the fix reverted, which is exactly the 3 it reported.
+#[test]
+fn a_limit_typed_into_the_endpoint_governs_the_page_size() {
+    let inst = instance_or_skip!();
+    let repo = TestRepo::create(inst, "paging-endpointquery");
+    seed_issues(&repo, ISSUES);
+
+    // Without `--paginate` first: one page, of exactly the size that was asked for.
+    let run =
+        inst.fcli(["api", &format!("repos/{}/issues?limit=5", repo.slug()), "--jq", ".[].number"]);
+    run.assert_ok("fcli api with an endpoint query");
+    assert_eq!(
+        run.stdout.lines().filter(|l| !l.trim().is_empty()).count(),
+        5,
+        "a `?limit=5` the user typed must reach the server"
+    );
+
+    let run = inst.fcli([
+        "api",
+        &format!("repos/{}/issues?limit=5", repo.slug()),
+        "--paginate",
+        "--debug",
+        "--jq",
+        ".[].number",
+    ]);
+    run.assert_ok("fcli api --paginate with an endpoint query");
+
+    let mut got: Vec<u64> = run.stdout.lines().filter_map(|l| l.trim().parse().ok()).collect();
+    let total = got.len();
+    got.sort_unstable();
+    got.dedup();
+    assert_eq!(total, ISSUES, "the walk must still collect everything");
+    assert_eq!(got.len(), ISSUES, "the walk must not return duplicates");
+
+    assert_eq!(
+        pages_walked(&run),
+        Some(ISSUES.div_ceil(5)),
+        "the user's `?limit=5` did not survive into the walk — it took a different number of \
+         pages, which means the paginator sent its own limit alongside a second `?`:\n{}",
+        run.stderr
+    );
+    assert!(
+        !run.stderr.contains("issues?limit=5?"),
+        "the request URL carries two `?`:\n{}",
+        run.stderr
+    );
+}
+
+/// A `%`-escape the user typed has to reach the server as the bytes they escaped, and no more.
+///
+/// This guards the *fix*, not the original bug: folding the endpoint's query into the structured
+/// list means it is now decoded on the way in and re-encoded on the way out, and a round trip
+/// that is not exactly balanced turns `?q=a%20b` — a search for `a b` — into `?q=a%2520b`, a
+/// search for the six characters the user typed to avoid the space. The old code passed the raw
+/// string through untouched and so could not get this wrong; the new code can, which is why it
+/// is pinned here against a real server rather than only in a URL-shape unit test.
+///
+/// The control is the double-escaped spelling, which must find nothing: without it the
+/// assertion would pass on a server that simply ignores `q`.
+#[test]
+fn a_percent_escape_in_an_endpoint_query_is_not_encoded_twice() {
+    let inst = instance_or_skip!();
+    let repo = TestRepo::create(inst, "paging-escape");
+    let (code, body) = repo.api("POST", "issues", Some(r#"{"title":"needle haystack marker"}"#));
+    assert!((200..300).contains(&code), "seeding the issue failed: HTTP {code}: {body}");
+    repo.api("POST", "issues", Some(r#"{"title":"unrelated"}"#));
+
+    // Forgejo indexes issue titles asynchronously — a search a second after the POST finds
+    // nothing — so the ground truth is established out of band first, by polling. Without this
+    // the assertions below would be testing the indexer's latency rather than our encoding, and
+    // would fail roughly whenever the container was busy.
+    let direct = || -> usize {
+        let (_, body) = repo.api("GET", "issues?q=needle%20hay", None);
+        serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.as_array().map(Vec::len))
+            .unwrap_or(0)
+    };
+    let mut waited = 0;
+    while direct() != 1 && waited < 60 {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        waited += 1;
+    }
+    assert_eq!(
+        direct(),
+        1,
+        "the server itself never matched `q=needle%20hay`, so this test cannot say anything \
+         about how fcli spells it"
+    );
+
+    let hits = |query: &str| -> usize {
+        let run =
+            inst.fcli(["api", &format!("repos/{}/issues?{query}", repo.slug()), "--jq", "length"]);
+        run.assert_ok(&format!("fcli api with '{query}'"));
+        run.stdout
+            .trim()
+            .parse()
+            .unwrap_or_else(|_| panic!("expected a count from --jq length, got {:?}", run.stdout))
+    };
+
+    assert_eq!(
+        hits("q=needle%20hay"),
+        1,
+        "`%20` must reach the server as a space, so the search matches the issue whose title \
+         contains one — the same match the server just made for the same spelling"
+    );
+    assert_eq!(
+        hits("q=needle%2520hay"),
+        0,
+        "`%2520` is the escaped form of `%20` and must stay escaped — a match here would mean \
+         the decode step is collapsing an escape the user wrote deliberately"
+    );
+}
 /// `--limit N` is a user cap (termination rule (e)) and must stop the walk early rather than
 /// being rounded up to a page boundary.
 #[test]

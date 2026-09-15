@@ -22,6 +22,7 @@
 pub mod fields;
 pub mod paginate;
 
+use std::borrow::Cow;
 use std::io::Write;
 
 use clap::{ArgMatches, Args};
@@ -142,9 +143,14 @@ async fn execute(
     // is the only reading that does not silently discard them.
     let fields_to_query = args.input.is_some() || method == "GET" || method == "HEAD";
 
-    let path = endpoint_path(&args.endpoint, rt, globals)?;
+    let (path, endpoint_query) = endpoint_path(&args.endpoint, rt, globals)?;
     let mut req = Request::get(path).accept(Accept::Json);
     set_method(&mut req, method)?;
+
+    // Before the `-f`/`-F` fields, so the order on the wire matches the order the user typed.
+    for (key, value) in endpoint_query {
+        req = req.query(key, value);
+    }
 
     if fields_to_query {
         for (key, value) in fields::to_query(parsed) {
@@ -404,14 +410,61 @@ pub(crate) fn set_method(req: &mut Request, name: &str) -> Result<()> {
     Ok(())
 }
 
-/// The endpoint as a path relative to `/api/v1`, with placeholders filled in.
-fn endpoint_path(endpoint: &str, rt: &Runtime, globals: &GlobalOpts) -> Result<String> {
+/// The endpoint as a path relative to `/api/v1`, with placeholders filled in, plus any query
+/// the endpoint carried.
+///
+/// # A typed query has to leave the path
+///
+/// `repos/o/r/issues?limit=100` used to become [`Request::path`] whole, `?` and all. Nothing
+/// downstream looks inside `path` for a query: [`Request::has_query`] inspects only the
+/// structured list, so `paginate::walk`'s opt-out saw no `limit`, sent its own, and `url_for`
+/// pushed a second `?` onto a URL that already had one —
+/// `/api/v1/repos/o/r/issues?limit=100?limit=50&page=2`. Neither limit survives that.
+///
+/// Splitting here — after [`substitute`], whose values go through [`encode::seg`] and so cannot
+/// contribute a `?` of their own — puts the pairs where `set_query`, `has_query`, and
+/// [`encode::query_string`] all read the same one list.
+fn endpoint_path(
+    endpoint: &str,
+    rt: &Runtime,
+    globals: &GlobalOpts,
+) -> Result<(String, Vec<(String, String)>)> {
     let substituted = substitute(endpoint, rt, globals)?;
     let trimmed = substituted.trim();
     if trimmed.is_empty() {
         return Err(usage("the endpoint is empty; try `fcli api version`".to_owned()));
     }
-    Ok(strip_api_prefix(trimmed))
+    let (path, query) = match trimmed.split_once('?') {
+        Some((path, qs)) => (path, split_query(qs)?),
+        None => (trimmed, Vec::new()),
+    };
+    Ok((strip_api_prefix(path), query))
+}
+
+/// The `k=v&k=v` half of a typed endpoint, decoded.
+///
+/// Decoded, not copied verbatim, because the pairs are re-encoded by [`encode::query_string`] on
+/// the way out: handing it the raw `a%20b` would emit `a%2520b`, a search for the six characters
+/// the user escaped rather than the two they meant. See [`encode::decode_query`] for what that
+/// round trip does and does not preserve.
+///
+/// A bare `k` with no `=` is a present-but-empty parameter (`?draft&state=open`), which is how
+/// every server reads it — dropping it would silently discard a flag the user typed.
+fn split_query(qs: &str) -> Result<Vec<(String, String)>> {
+    let decode = |s: &str| {
+        encode::decode_query(s).map(Cow::into_owned).ok_or_else(|| {
+            usage(format!(
+                "{s:?} in the endpoint's query is not valid UTF-8 once its %-escapes are decoded"
+            ))
+        })
+    };
+    qs.split('&')
+        .filter(|pair| !pair.is_empty())
+        .map(|pair| {
+            let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+            Ok((decode(k)?, decode(v)?))
+        })
+        .collect()
 }
 
 /// A leading `/` is optional and a leading `/api/v1` is redundant.
@@ -564,6 +617,78 @@ mod tests {
         assert_eq!(strip_api_prefix("api/v1"), "/");
         // A path that merely *starts* with those letters is not the prefix.
         assert_eq!(strip_api_prefix("api/v1beta/x"), "/api/v1beta/x");
+    }
+
+    fn client() -> Client {
+        use forgejo_core::http::transport::{Canned, FakeTransport};
+        forgejo_core::http::Client::builder(
+            "https://git.example.org",
+            forgejo_core::http::Auth::None,
+        )
+        .transport(std::sync::Arc::new(FakeTransport::new().fallback(Canned::json(200, "[]"))))
+        .build()
+        .unwrap()
+    }
+
+    /// Build the request the way [`execute`] does, minus everything that needs a runtime.
+    fn request_for(endpoint: &str) -> Request {
+        let (path, query) = match endpoint.split_once('?') {
+            Some((p, qs)) => (strip_api_prefix(p), split_query(qs).unwrap()),
+            None => (strip_api_prefix(endpoint), Vec::new()),
+        };
+        let mut req = Request::get(path);
+        for (k, v) in query {
+            req = req.query(k, v);
+        }
+        req
+    }
+
+    /// Bug this prevents: a query typed into the endpoint became part of `Request::path`
+    /// wholesale, `?` and all. `has_query` only ever inspects the structured list, so
+    /// `paginate::walk`'s `if base.has_query("limit")` opt-out read false, the paginator added
+    /// its own paging, and `url_for` pushed a second `?` onto a URL that already had one:
+    ///
+    ///     /api/v1/repos/o/r/issues?limit=100?limit=50&page=2
+    ///
+    /// Two `?` means everything after the first is one opaque parameter value, so neither limit
+    /// is honoured. The walk still terminated on the `Link` header, which is why this survived a
+    /// passing integration test.
+    #[test]
+    fn a_query_typed_into_the_endpoint_does_not_collide_with_the_paginators() {
+        let req = request_for("repos/o/r/issues?limit=100&state=open");
+        assert_eq!(req.path, "/repos/o/r/issues", "the query must leave the path");
+        assert!(req.has_query("limit"), "the paginator's opt-out reads this, and read false");
+        assert!(req.has_query("state"));
+
+        let url = request_line(&client(), &req);
+        assert_eq!(url.matches('?').count(), 1, "malformed URL: {url}");
+        assert_eq!(url, "https://git.example.org/api/v1/repos/o/r/issues?limit=100&state=open");
+
+        // And `set_query` now *replaces* rather than appending a rival, which is the property
+        // that makes the paginator's own `limit`/`page` unambiguous.
+        let mut paged = req;
+        paged.set_query("limit", 50);
+        paged.set_query("page", 2);
+        let url = request_line(&client(), &paged);
+        assert_eq!(url.matches('?').count(), 1, "malformed URL: {url}");
+        assert_eq!(url.matches("limit=").count(), 1, "two limits: {url}");
+    }
+
+    /// A user's `%`-escape must not be re-escaped on its way back out: `?q=a%20b` is a search
+    /// for `a b`, and `q=a%2520b` searches for the six characters they typed to avoid it.
+    #[test]
+    fn a_percent_escape_in_the_endpoint_is_not_double_encoded() {
+        let url = request_line(&client(), &request_for("repos/o/r/issues?q=a%20b&t=c%2B%2B"));
+        assert_eq!(url, "https://git.example.org/api/v1/repos/o/r/issues?q=a%20b&t=c%2B%2B");
+
+        // A bare key is a present-but-empty parameter, which is how a server reads it; dropping
+        // it would silently discard a flag the user typed.
+        let url = request_line(&client(), &request_for("repos/o/r/issues?draft&state=open"));
+        assert_eq!(url, "https://git.example.org/api/v1/repos/o/r/issues?draft=&state=open");
+
+        // An escape that is not UTF-8 has no `String` form, so it is a usage error rather than
+        // a silently mangled search term.
+        assert!(split_query("q=%FF").is_err());
     }
 
     #[test]

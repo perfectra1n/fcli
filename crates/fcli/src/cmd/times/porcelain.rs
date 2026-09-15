@@ -449,9 +449,14 @@ pub async fn resolve_user(rt: &Runtime, name: &str) -> Result<String> {
     me(rt).await
 }
 
-/// The authenticated user's login.
+/// The authenticated user's login, by asking the server.
 ///
-/// Prefers the login already recorded for the host, so the common case costs no request.
+/// One `GET /user` every time, on purpose. The login recorded in `hosts.toml` is *fcli's name for
+/// a credential*, not a verified identity: a rotated token, or a `$FORGEJO_TOKEN` exported against
+/// a host whose entry names somebody else, and `@me` would quietly resolve to the wrong person.
+/// `times add --user @me` writes a timesheet entry, so that is a wrong row under a real name
+/// rather than a cosmetic slip. The request is also the only thing that proves the token still
+/// works before a mutation is attempted.
 pub async fn me(rt: &Runtime) -> Result<String> {
     let api = forgejo_client::Api::new(rt.client().clone());
     Ok(api.user().get_current().await?.login)

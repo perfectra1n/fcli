@@ -84,14 +84,15 @@ pub fn run(globals: &GlobalOpts, args: &Args) -> Result<()> {
         let rt = Runtime::new(globals)?;
         let api = support::api(&rt);
         let source_slug = super::target(&rt, globals, &api, args.repo.as_deref()).await?;
-        let source = api.repo().get(&source_slug.owner, &source_slug.name).await?;
-        let (fork, adopted) = fork(&api, args, &source_slug).await?;
+        let Forked { fork, adopted, source } = forked(&api, args, &source_slug).await?;
         if adopted {
             support::note(rt.term(), &format!("{} already exists; using it", fork.full_name));
         }
 
-        if args.clone {
-            clone_the_fork(&rt, args, &fork, &source)?;
+        // `source` is `Some` exactly when `--clone` was given, which is the only thing that reads
+        // it — so this is the same branch as before, expressed through the value it needs.
+        if let Some(source) = &source {
+            clone_the_fork(&rt, args, &fork, source)?;
         } else if args.remote {
             rewire_here(&rt, args, &fork, &source_slug)?;
         }
@@ -106,6 +107,39 @@ pub fn run(globals: &GlobalOpts, args: &Args) -> Result<()> {
             }
         }
     })
+}
+
+/// What the network half of the command produced.
+pub(crate) struct Forked {
+    pub fork: Repository,
+    /// The fork already existed and was adopted rather than created.
+    pub adopted: bool,
+    /// The **source** repository, fetched only when `--clone` is going to need its clone URL.
+    pub source: Option<Repository>,
+}
+
+/// The fork, plus the source repository when — and only when — something is going to read it.
+///
+/// The source used to be fetched unconditionally, and `fcli repo fork o/r` then threw it away:
+/// the one site that reads it is [`clone_the_fork`], [`rewire_here`] takes the *slug*, and both
+/// output paths render the **fork**. So the plain form and `--remote` each spent a round trip on
+/// a value nobody looked at. It is not a validation either — `create_fork` 404s on a missing
+/// source by itself.
+///
+/// It is still fetched **before** the fork POST rather than inside the `--clone` branch after it.
+/// Today a failed lookup means no fork was created, and moving the read after the write (or
+/// overlapping the two) would leave a fork behind that the command's own error says it did not
+/// make.
+///
+/// Split out from [`run`] so a `FakeTransport` test can count the requests without a
+/// [`Runtime`].
+pub(crate) async fn forked(api: &Api, args: &Args, source_slug: &RepoSlug) -> Result<Forked> {
+    let source = match args.clone {
+        true => Some(api.repo().get(&source_slug.owner, &source_slug.name).await?),
+        false => None,
+    };
+    let (fork, adopted) = fork(api, args, source_slug).await?;
+    Ok(Forked { fork, adopted, source })
 }
 
 /// Create the fork, or adopt the one that already exists. The `bool` is "adopted".
@@ -252,6 +286,51 @@ mod tests {
         let sent = testing::body(&t, "POST", "/api/v1/repos/them/proj/forks");
         assert_eq!(sent["name"], "proj-x");
         assert_eq!(sent["organization"], "my-team");
+    }
+
+    /// Bug this prevents: `fcli repo fork o/r` and `fcli repo fork o/r --remote` each spending a
+    /// round trip on the **source** repository and then throwing it away. Only `--clone` reads it
+    /// (for the `upstream` remote's URL); `--remote` rewires from the *slug*, and both output
+    /// paths render the fork. It was never a validation either — `create_fork` 404s on a missing
+    /// source by itself.
+    ///
+    /// `--clone` still pays for it, and still pays for it **before** the POST: a failed lookup
+    /// must keep meaning "no fork was created" rather than leaving one behind that the command's
+    /// own error denies making.
+    #[tokio::test]
+    async fn a_fork_that_is_not_cloned_never_reads_the_source_repository() {
+        let fixture = || {
+            let t = Arc::new(testing::on(
+                testing::on(
+                    testing::transport(),
+                    "POST",
+                    "/api/v1/repos/them/proj/forks",
+                    Canned::json(202, r#"{"full_name":"me/proj","name":"proj"}"#),
+                ),
+                "GET",
+                "/api/v1/repos/them/proj",
+                Canned::json(200, r#"{"full_name":"them/proj","name":"proj"}"#),
+            ));
+            (testing::api_at(testing::EXAMPLE, t.clone()), t)
+        };
+        let slug = RepoSlug::new("them", "proj");
+
+        for words in [vec!["fcli"], vec!["fcli", "--remote"]] {
+            let (api, t) = fixture();
+            let out = forked(&api, &args(&words), &slug).await.expect("fork");
+            assert!(out.source.is_none(), "{words:?} read the source repository");
+            assert_eq!(out.fork.full_name, "me/proj");
+            assert_eq!(t.call_count(), 1, "{words:?}: {:?}", t.calls());
+        }
+
+        let (api, t) = fixture();
+        let out = forked(&api, &args(&["fcli", "--clone"]), &slug).await.expect("fork");
+        assert_eq!(out.source.expect("--clone needs it").full_name, "them/proj");
+        assert_eq!(t.call_count(), 2, "{:?}", t.calls());
+        // Read before written: the source lookup is the first call, the fork POST the second.
+        let calls = t.calls();
+        assert_eq!(calls[0].method, "GET", "{calls:?}");
+        assert_eq!(calls[1].method, "POST", "{calls:?}");
     }
 
     /// Bug this prevents — and it broke the command's *most common* form, `fcli repo fork o/r`

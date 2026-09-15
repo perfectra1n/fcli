@@ -130,18 +130,44 @@ async fn fetch(api: &Api, slug: &RepoSlug, args: &Args, limit: usize) -> Result<
     if let Some(head) = &args.head {
         query = query.with_head(head);
     }
-    if let Some(author) = &args.author {
-        let resolved = support::resolve_me(api, std::slice::from_ref(author)).await?;
-        query = query.with_poster(&resolved[0]);
-    }
-    if !args.label.is_empty() {
-        query = query.with_labels(common::label_ids(api, slug, &args.label).await?);
-    }
-
-    let assignee = match &args.assignee {
-        Some(a) => Some(support::resolve_me(api, std::slice::from_ref(a)).await?.remove(0)),
-        None => None,
+    // `--author @me --assignee @me` used to be two identical `GET /user` requests one after the
+    // other, with the label lookup in between; all three depend on nothing but the command line,
+    // so they run at the same time. `join!` with a fixed unwrap order rather than `try_join!`, so
+    // a command with two bad names reports the same one it always did.
+    let resolve_author = async {
+        match &args.author {
+            Some(a) => support::resolve_me(api, std::slice::from_ref(a))
+                .await
+                .map(|mut who| Some(who.remove(0))),
+            None => Ok(None),
+        }
     };
+    let resolve_labels = async {
+        if args.label.is_empty() {
+            return Ok(None);
+        }
+        common::label_ids(api, slug, &args.label).await.map(Some)
+    };
+    let resolve_assignee = async {
+        match &args.assignee {
+            Some(a) => support::resolve_me(api, std::slice::from_ref(a))
+                .await
+                .map(|mut who| Some(who.remove(0))),
+            None => Ok(None),
+        }
+    };
+    let resolved = futures::join!(resolve_author, resolve_labels, resolve_assignee);
+    let author = resolved.0?;
+    let labels = resolved.1?;
+    let assignee = resolved.2?;
+
+    // Applied in the order the serial version applied them, so the query string is unchanged.
+    if let Some(poster) = &author {
+        query = query.with_poster(poster);
+    }
+    if let Some(ids) = labels {
+        query = query.with_labels(ids);
+    }
     let client_side = assignee.is_some()
         || args.search.is_some()
         || args.state == "merged"

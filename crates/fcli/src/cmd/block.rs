@@ -25,6 +25,11 @@
 //!   short, so that is the right trade; `--json` skips the resolution entirely and gives you the
 //!   API's own shape, because `--json` promises the API's field names and inventing a `login` key
 //!   would break that promise (`docs/output.md`).
+//!
+//!   The *count* is not negotiable — there is no batch route and `UserSearchQuery` takes a single
+//!   `uid` — but the *waiting* is. The lookups are independent reads of one server, so `list`
+//!   keeps [`LOOKUPS_AT_ONCE`] of them in flight instead of paying a full round trip per row:
+//!   a blocklist of twenty against a WAN instance is three waves rather than twenty waits.
 //! * A lookup that fails — the account was deleted, or the token cannot see it — leaves the id in
 //!   place rather than dropping the row. A blocklist that silently omits entries would be worse
 //!   than one with a bare number in it.
@@ -40,6 +45,14 @@ use crate::global::GlobalOpts;
 use crate::runtime::Runtime;
 
 const OP_LIST: &str = "userListBlockedUsers";
+
+/// How many `GET /users/search?uid=N` lookups `list` keeps in flight at once.
+///
+/// Bounded rather than "all of them": a self-hosted instance behind a modest reverse proxy answers
+/// a wide burst with 429s, and the retry layer then spends back — with backoff on top — exactly the
+/// latency the concurrency won. Eight is deep enough that a typical blocklist finishes in one or
+/// two waves and shallow enough that no proxy notices.
+const LOOKUPS_AT_ONCE: usize = 8;
 
 #[derive(Debug, ClapArgs)]
 pub struct Args {
@@ -119,6 +132,8 @@ async fn list(
     globals: &GlobalOpts,
     emit: &mut Emit<'_>,
 ) -> Result<()> {
+    use futures::StreamExt;
+
     let cap = support::item_cap(globals);
     let (blocked, total) = match (org, globals.paginate) {
         (Some(org), true) => {
@@ -157,10 +172,15 @@ async fn list(
         return emit.json(&blocked);
     }
 
-    let mut rows: Vec<(String, String)> = Vec::with_capacity(blocked.len());
-    for b in &blocked {
-        rows.push((login_of(api, b).await, created(b)));
-    }
+    // `buffered`, never `buffer_unordered`: the rows are consumed positionally just below, so the
+    // printed order is the order the server listed the blocklist in. `buffer_unordered` would hand
+    // back whichever lookup answered first, which turns a stable list into one that shuffles
+    // itself between invocations depending on how the server felt.
+    let rows: Vec<(String, String)> = futures::stream::iter(&blocked)
+        .map(|b| async move { (login_of(api, b).await, created(b)) })
+        .buffered(LOOKUPS_AT_ONCE)
+        .collect()
+        .await;
     emit.many(&blocked, total, "blocked accounts", |table, _| {
         table.headers(["USER", "SINCE"]);
         for (login, since) in &rows {
@@ -268,6 +288,64 @@ mod tests {
         }
         // The deleted account keeps its id rather than vanishing from the list.
         insta::assert_snapshot!(String::from_utf8(buf).unwrap());
+    }
+
+    /// Bug this prevents: the concurrent id lookups deciding the row order.
+    ///
+    /// The lookups run `LOOKUPS_AT_ONCE` at a time, so the answers no longer arrive in the order
+    /// they were asked for. `buffered` re-serialises them onto the listing's order; a
+    /// `buffer_unordered` would print whichever account the server answered for first, so the
+    /// same blocklist would render differently from one invocation to the next.
+    ///
+    /// Ten accounts — more than one `buffered` wave, so the wave boundary is covered — whose ids
+    /// are shuffled and whose logins sort in the opposite direction to their ids. The expected
+    /// order is therefore neither id order nor alphabetical order, only the listing's own, so a
+    /// row/lookup mis-zip or any ordering rule keyed on the *data* fails here.
+    ///
+    /// What it honestly cannot catch is completion-order reordering: `FakeTransport` answers
+    /// synchronously, so every lookup is ready on its first poll and `buffer_unordered` would
+    /// happen to drain in input order too. That half of the property needs a fake that can be
+    /// slow; `auth status` has one (a host nothing listens on) and pins it there.
+    #[tokio::test]
+    async fn the_rendered_rows_follow_the_listing_order_not_the_lookup_order() {
+        // `login_for` makes a uid's login sort against its uid: uid 20 becomes u79, uid 1 u98.
+        fn login_for(uid: u64) -> String {
+            format!("u{:02}", 99 - uid)
+        }
+        const UIDS: [u64; 10] = [20, 1, 13, 4, 17, 8, 11, 2, 19, 6];
+
+        let listing: String = {
+            let rows: Vec<String> = UIDS
+                .iter()
+                .map(|u| format!(r#"{{"block_id":{u},"created_at":"2024-03-01T09:00:00Z"}}"#))
+                .collect();
+            format!("[{}]", rows.join(","))
+        };
+        let fake = testing::on(
+            FakeTransport::new(),
+            "GET",
+            "/api/v1/user/list_blocked",
+            Canned::json(200, listing),
+        );
+        let fake = Arc::new(testing::on_fn(fake, "GET", "/api/v1/users/search", |call| {
+            let uid: u64 = call.query_param("uid").expect("a uid").parse().expect("a number");
+            Canned::json(200, format!(r#"{{"ok":true,"data":[{{"login":"{}"}}]}}"#, login_for(uid)))
+        }));
+        let api = testing::api(fake.clone());
+        let globals = GlobalOpts::default();
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut emit =
+                Emit::new(&globals, None, &crate::output::Term::piped(), &mut buf).unwrap();
+            list(&api, None, &globals, &mut emit).await.unwrap();
+        }
+        let out = String::from_utf8(buf).unwrap();
+        let printed: Vec<&str> = out.lines().filter_map(|l| l.split('\t').next()).collect();
+        let expected: Vec<String> = UIDS.iter().copied().map(login_for).collect();
+        assert_eq!(printed, expected, "rows must follow the listing, not the lookups:\n{out}");
+        // Still exactly one lookup per blocked account: concurrency changed the waiting, not the
+        // request count the module doc justifies.
+        assert_eq!(fake.call_count(), 1 + UIDS.len());
     }
 
     /// Bug this prevents: inventing a `login` key in `--json` output. `--json` promises the API's

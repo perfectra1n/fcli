@@ -400,6 +400,10 @@ struct Inner {
     /// Whether a 404 under `/repos/{owner}/{repo}/…` triggers the disambiguating probe.
     probe_404: bool,
     caps: Mutex<Option<(Arc<Capabilities>, Instant)>>,
+    /// Single-flight gate for [`Client::capabilities`], held **across** the probe — which is
+    /// exactly why it is a second lock rather than `caps` promoted to a `tokio::sync::Mutex`.
+    /// See [`Client::capabilities`] for the deadlock that conflating the two would cause.
+    caps_gate: tokio::sync::Mutex<()>,
     on_wait: Option<WaitSink>,
 }
 
@@ -634,13 +638,36 @@ impl Client {
     /// Never fails in practice — an unreachable `/settings/api` yields
     /// [`Capabilities::conservative`] — but stays a `Result` so that adding a hard failure later
     /// is not a breaking change for a published crate.
+    ///
+    /// # Concurrent first calls probe once, not once each
+    ///
+    /// Commands fan out: `fcli status` drives four [`paginate`] walks at once, and every walk
+    /// asks for capabilities before its first request. Without a gate all four would miss the
+    /// cold cache, all four would probe, and one invocation would spend **eight** requests where
+    /// two do — growing with every command that learns to overlap its reads. So the loser of the
+    /// race waits for the winner's probe and reuses it.
+    ///
+    /// # Why the gate is a second lock and not `caps` made async
+    ///
+    /// The obvious simplification — make `caps` itself a `tokio::sync::Mutex` and hold it across
+    /// the probe — **deadlocks on the instances this module exists to tolerate**. The path is:
+    /// [`capabilities::probe`] → [`Client::json`] → [`Client::send`] → a non-2xx →
+    /// [`Client::error_from`] → [`Client::cached_caps`], which locks `caps`. A `403` or `404`
+    /// from `/settings/api` is the *documented common case* (see the [`capabilities`] module
+    /// header), so the probe re-enters that lock on exactly the deployments — older instances,
+    /// instances requiring auth for everything — that need to keep working. A separate gate
+    /// leaves `caps` a plain std mutex that is only ever locked for the length of a clone.
     pub async fn capabilities(&self) -> Result<Arc<Capabilities>> {
         if let Some(c) = self.cached_caps() {
             return Ok(c);
         }
-        // Two concurrent first calls can both probe. Harmless: the probe is two idempotent GETs
-        // and the loser's result is simply overwritten. Holding a lock across the await to
-        // prevent it would serialise every command behind a network round trip.
+        let _gate = self.inner.caps_gate.lock().await;
+        // Re-check: the winner of the race filled the cache while we waited on the gate, and
+        // without this the gate would only serialise the duplicate probes rather than remove
+        // them.
+        if let Some(c) = self.cached_caps() {
+            return Ok(c);
+        }
         let caps = Arc::new(capabilities::probe(self).await);
         if let Ok(mut slot) = self.inner.caps.lock() {
             *slot = Some((caps.clone(), Instant::now()));
@@ -1037,6 +1064,7 @@ impl ClientBuilder {
                 token_source: self.token_source,
                 probe_404: self.probe_404,
                 caps: Mutex::new(None),
+                caps_gate: tokio::sync::Mutex::new(()),
                 on_wait: self.on_wait,
             }),
         })

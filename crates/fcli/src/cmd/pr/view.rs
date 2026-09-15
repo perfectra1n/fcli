@@ -50,14 +50,7 @@ pub fn run(globals: &GlobalOpts, args: &Args) -> Result<()> {
             return support::open_web(&rt, &found.pr.html_url);
         }
 
-        let comments = if args.comments {
-            let query = forgejo_client::query::IssueGetCommentsQuery::default();
-            api.issue()
-                .get_comments(&found.slug.owner, &found.slug.name, found.index(), &query)
-                .await?
-        } else {
-            Vec::new()
-        };
+        let comments = comments_for(&api, &found, args.comments && !is_machine(&wanted)).await?;
 
         common::emit_or(&rt, globals, &wanted, &found.pr, || {
             let mut out = std::io::stdout().lock();
@@ -69,6 +62,35 @@ pub fn run(globals: &GlobalOpts, args: &Args) -> Result<()> {
             Ok(())
         })
     })
+}
+
+/// Whether the machine path is what will be printed.
+///
+/// `Wanted::Listed` never reaches here — `run` returns on it — so the only question left is
+/// whether `emit_or` will render the pull request as JSON instead of calling the human closure.
+fn is_machine(wanted: &support::machine::Wanted) -> bool {
+    matches!(wanted, support::machine::Wanted::Machine(_))
+}
+
+/// The comments, but only when something is going to print them.
+///
+/// Bug this prevents: `fcli pr view 42 -c --json state` paying for a comments request whose answer
+/// is then discarded. `emit_or` renders the pull request alone on the machine path, so `-c` is a
+/// display flag and nothing more — and `pr view --json` is the shape a script polls in a loop.
+/// `fcli issue view` has always returned before its comments fetch; this is the same guard.
+///
+/// Takes a bare [`Api`] rather than the [`Runtime`] it comes from, so a `FakeTransport` test can
+/// assert the request this does *not* make without a network or a config file.
+async fn comments_for(
+    api: &forgejo_client::Api,
+    found: &common::Found,
+    wanted: bool,
+) -> Result<Vec<forgejo_model::Comment>> {
+    if !wanted {
+        return Ok(Vec::new());
+    }
+    let query = forgejo_client::query::IssueGetCommentsQuery::default();
+    api.issue().get_comments(&found.slug.owner, &found.slug.name, found.index(), &query).await
 }
 
 /// Comments, oldest first, each with its author and age.
@@ -102,6 +124,7 @@ fn render_comments(comments: &[forgejo_model::Comment], term: &crate::output::Te
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cmd::support::testing;
     use crate::output::Term;
     use forgejo_core::types::ids::{CommentId, IssueIndex};
     use forgejo_model::{Comment, PrBranchInfo, PullRequest, StateType, User};
@@ -147,6 +170,46 @@ mod tests {
         let empty = PullRequest { body: String::new(), ..pr() };
         let out = common::detail(&empty, &Term::tty(80), true);
         assert!(out.contains("No description provided."), "{out}");
+    }
+
+    fn found() -> common::Found {
+        common::Found { slug: forgejo_core::types::RepoSlug::new("them", "proj"), pr: pr() }
+    }
+
+    /// Bug this prevents — the reported one. `fcli pr view 42 -c --json state` fetched the
+    /// comments and then threw them away: `emit_or` prints the pull request alone on the machine
+    /// path, so `-c` never reaches a renderer. Two requests for one answer, in the shape a script
+    /// polls in a loop. `fcli issue view` returns before its comments fetch; this is the same
+    /// guard, and this test is what keeps it.
+    #[tokio::test]
+    async fn the_machine_path_does_not_fetch_comments_it_will_not_print() {
+        let fake = std::sync::Arc::new(testing::on(
+            testing::transport(),
+            "GET",
+            "/api/v1/repos/them/proj/issues/42/comments",
+            forgejo_core::http::transport::Canned::json(200, "[]"),
+        ));
+        let api = testing::api_at(testing::EXAMPLE, fake.clone());
+
+        // `-c --json state`: the comments are not wanted, so nothing is asked for.
+        assert!(comments_for(&api, &found(), false).await.unwrap().is_empty());
+        assert_eq!(fake.call_count(), 0, "--json must not pay for comments: {:?}", fake.calls());
+
+        // ...and the human `-c` still gets them, in one request.
+        comments_for(&api, &found(), true).await.unwrap();
+        assert_eq!(fake.call_count(), 1);
+        assert_eq!(fake.calls()[0].path, "/api/v1/repos/them/proj/issues/42/comments");
+    }
+
+    /// The gate `run` feeds `comments_for`, checked for polarity: reading it backwards would
+    /// swap the two paths and make the human `-c` the one that prints nothing.
+    #[test]
+    fn only_machine_output_suppresses_the_comments() {
+        assert!(!is_machine(&support::machine::Wanted::Human), "the human view prints comments");
+        let machine = support::machine::Wanted::Machine(
+            support::machine::Triad::compile(&GlobalOpts::default(), None).unwrap(),
+        );
+        assert!(is_machine(&machine), "--json/--jq/--template discard them");
     }
 
     #[test]

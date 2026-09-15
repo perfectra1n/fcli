@@ -966,10 +966,26 @@ impl Instance {
     /// Out-of-band on purpose: an assertion about what `fcli` did to the server is worthless if
     /// it is checked through the same code that may have got it wrong.
     pub fn api(&self, method: &str, path: &str, body: Option<&str>) -> (i32, String) {
+        self.api_as(&self.token, method, path, body)
+    }
+
+    /// As [`Instance::api`], but as somebody other than the admin.
+    ///
+    /// Exists for the one thing the admin token cannot do: be a *second* party. Forgejo does not
+    /// notify you about your own actions, so a test that needs an inbox has to have somebody
+    /// else fill it — see `porcelain.rs`'s `--mark-read` test, which is otherwise a test of an
+    /// empty list.
+    pub fn api_as(
+        &self,
+        token: &str,
+        method: &str,
+        path: &str,
+        body: Option<&str>,
+    ) -> (i32, String) {
         let mut c = Command::new("curl");
         c.args(["-sS", "-w", "\n%{http_code}", "--max-time", "30"])
             .args(["-X", method])
-            .args(["-H", &format!("Authorization: token {}", self.token)])
+            .args(["-H", &format!("Authorization: token {token}")])
             .args(["-H", "Content-Type: application/json"]);
         if let Some(b) = body {
             c.args(["-d", b]);

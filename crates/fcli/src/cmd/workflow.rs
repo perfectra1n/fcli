@@ -41,7 +41,7 @@ use forgejo_core::error::{Error, ErrorKind, Result};
 use forgejo_core::http::Request;
 use forgejo_core::types::RepoSlug;
 use forgejo_model::ContentsResponse;
-use futures::StreamExt;
+use futures::{StreamExt, TryStreamExt};
 use serde_json::Value;
 
 use crate::api::fields::{self, Typing};
@@ -57,7 +57,19 @@ use crate::runtime::Runtime;
 /// All three are read: `.forgejo/workflows` is Forgejo's own, `.gitea/workflows` is inherited,
 /// and `.github/workflows` is what a repository mirrored from GitHub has. A tool that only
 /// looked in one of them would report "no workflows" for a repository whose Actions work.
+///
+/// The usual repository has **one** of the three, so two of the three reads exist only to be
+/// discarded as 404s — see [`discover`], which therefore sends all three at once rather than
+/// paying two serial round trips for answers it is going to throw away.
 const WORKFLOW_DIRS: [&str; 3] = [".forgejo/workflows", ".gitea/workflows", ".github/workflows"];
+
+/// How many workflow files [`list`] reads at once.
+///
+/// Bounded rather than "all of them at once": an unbounded burst against a self-hosted instance
+/// behind a reverse proxy trips its rate limit, and `forgejo_core::http`'s retry layer then spends
+/// back in backoff everything the concurrency bought. Six is enough to hide the round trip of the
+/// handful of workflows a repository has.
+const READ_CONCURRENCY: usize = 6;
 
 /// The shape `list` and `view` emit.
 ///
@@ -181,17 +193,22 @@ async fn list(rt: &Runtime, globals: &GlobalOpts, api: &Api, args: &ListArgs) ->
     let files = discover(api, &slug, args.git_ref.as_deref()).await?;
     let limit = support::limit(None, globals);
 
-    let mut rows: Vec<(ContentsResponse, yaml::Parsed)> = Vec::new();
-    for entry in files.into_iter().take(limit) {
-        // One request per file. That is the price of the columns that matter: without reading the
-        // file there is no way to know whether it can be dispatched or which labels it needs, and
-        // a repository has a handful of workflows, not hundreds.
-        let parsed = read_workflow(api, &slug, &entry.path, args.git_ref.as_deref()).await?;
-        if args.dispatchable && !parsed.dispatchable() {
-            continue;
-        }
-        rows.push((entry, parsed));
-    }
+    // `take(limit)` before any fetching, so `--limit` still caps the number of requests rather
+    // than only the number of rows printed.
+    let entries: Vec<ContentsResponse> = files.into_iter().take(limit).collect();
+    // One request per file. That is the price of the columns that matter: without reading the
+    // file there is no way to know whether it can be dispatched or which labels it needs, and
+    // a repository has a handful of workflows, not hundreds. They are read [`READ_CONCURRENCY`]
+    // at a time rather than one after another: nothing is printed until `emit::list` below, so
+    // the serial version was N round trips for a table that could not appear until the last one
+    // came back anyway.
+    let parsed = read_all(api, &slug, &entries, args.git_ref.as_deref()).await?;
+
+    let rows: Vec<(ContentsResponse, yaml::Parsed)> = entries
+        .into_iter()
+        .zip(parsed)
+        .filter(|(_, p)| !args.dispatchable || p.dispatchable())
+        .collect();
 
     let value = Value::Array(rows.iter().map(|(e, p)| as_json(e, p)).collect());
     let listing = Listing {
@@ -511,16 +528,38 @@ async fn toggle(
 // ---------------------------------------------------------------------------------- plumbing
 
 /// Every workflow file in the repository, across all three directories Forgejo reads.
+///
+/// # All three at once, and `join!` is not `try_join!`
+///
+/// A repository normally has exactly one of the three directories, so two of these reads are
+/// 404s that the arm below deliberately discards — and read in series that is two round trips
+/// spent on answers nobody wants, charged to every `fcli workflow` subcommand because
+/// [`resolve_file`] comes through here too. [`futures::join!`] drives all three to completion;
+/// [`futures::try_join!`] would cancel the other two the moment one returned, and **a 404 here is
+/// the normal case**, so the first missing directory would take the present one down with it.
+///
+/// The results are then triaged in `WORKFLOW_DIRS` order rather than in the order they arrived,
+/// so `first_error` still means "the first directory's error" and the message the user sees does
+/// not depend on which request the network happened to answer first.
 async fn discover(
     api: &Api,
     slug: &RepoSlug,
     git_ref: Option<&str>,
 ) -> Result<Vec<ContentsResponse>> {
+    // Destructured rather than indexed: adding a fourth directory to `WORKFLOW_DIRS` then fails
+    // to compile here instead of quietly becoming a directory that is never read.
+    let [forgejo, gitea, github] = WORKFLOW_DIRS;
+    let (a, b, c) = futures::join!(
+        list_dir(api, slug, forgejo, git_ref),
+        list_dir(api, slug, gitea, git_ref),
+        list_dir(api, slug, github, git_ref),
+    );
+
     let mut out: Vec<ContentsResponse> = Vec::new();
     let mut first_error: Option<Error> = None;
 
-    for dir in WORKFLOW_DIRS {
-        match list_dir(api, slug, dir, git_ref).await {
+    for result in [a, b, c] {
+        match result {
             Ok(entries) => out.extend(
                 entries.into_iter().filter(|e| e.r#type == "file" && is_workflow_file(&e.name)),
             ),
@@ -609,6 +648,30 @@ async fn read_workflow(
     git_ref: Option<&str>,
 ) -> Result<yaml::Parsed> {
     Ok(yaml::parse(&read_source(api, slug, path, git_ref).await?))
+}
+
+/// Read every discovered file, [`READ_CONCURRENCY`] at a time, **in `entries` order**.
+///
+/// `buffered` rather than `buffer_unordered`: the returned vector is zipped straight back onto
+/// `entries`, which [`discover`] has already sorted by path, and an unordered stream would
+/// silently pair each row's columns with a different file's body. It also means the error this
+/// returns is the first *in path order*, not the first to arrive — the same error the serial
+/// loop this replaced used to report.
+///
+/// Split out from [`list`] so a `FakeTransport` test can count the requests without a
+/// [`Runtime`].
+async fn read_all(
+    api: &Api,
+    slug: &RepoSlug,
+    entries: &[ContentsResponse],
+    git_ref: Option<&str>,
+) -> Result<Vec<yaml::Parsed>> {
+    futures::stream::iter(
+        entries.iter().map(|entry| read_workflow(api, slug, &entry.path, git_ref)),
+    )
+    .buffered(READ_CONCURRENCY)
+    .try_collect()
+    .await
 }
 
 /// The ref to dispatch on: the checked-out branch, else the repository's default branch.
@@ -718,6 +781,112 @@ mod tests {
         }
     }
 
+    /// Bug this prevents: the three directory listings now overlap, so the error the user is shown
+    /// would otherwise be whichever request the network happened to answer first — a message that
+    /// changes between runs of the same command against the same broken instance. The triage runs
+    /// in `WORKFLOW_DIRS` order, so the *first directory's* error is the one that survives.
+    #[tokio::test]
+    async fn a_concurrent_discovery_still_reports_the_first_directorys_error() {
+        // `.forgejo` is scope-shaped, the other two are 500s. Whatever order they come back in,
+        // the scope error is the one the user is told about.
+        let fake = Arc::new(
+            FakeTransport::new()
+                .on(
+                    "GET".parse().unwrap(),
+                    "/api/v1/repos/o/r/contents/.forgejo/workflows",
+                    Canned::json(403, r#"{"message":"token does not have scope"}"#),
+                )
+                .fallback(Canned::json(500, r#"{"message":"boom"}"#)),
+        );
+        let e = discover(&api_for(fake.clone()), &RepoSlug::new("o", "r"), None).await.unwrap_err();
+        assert!(matches!(e.kind(), ErrorKind::InsufficientScope { .. }), "{e:?}");
+        // All three are still asked for, concurrently: none was cancelled by an early return, the
+        // way `try_join!` would have cancelled them.
+        let paths: Vec<String> = fake.calls().iter().map(|c| c.path.clone()).collect();
+        for dir in WORKFLOW_DIRS {
+            assert!(paths.iter().any(|p| p.ends_with(dir)), "{dir} was never listed: {paths:?}");
+        }
+        assert_eq!(fake.call_count(), WORKFLOW_DIRS.len(), "{paths:?}");
+
+        // Swap the two failures over and the *other* error wins, which is what makes this a test
+        // of position rather than of which error happens to look more interesting.
+        let fake = Arc::new(
+            FakeTransport::new()
+                .on(
+                    "GET".parse().unwrap(),
+                    "/api/v1/repos/o/r/contents/.forgejo/workflows",
+                    Canned::json(500, r#"{"message":"boom"}"#),
+                )
+                .fallback(Canned::json(403, r#"{"message":"token does not have scope"}"#)),
+        );
+        let e = discover(&api_for(fake), &RepoSlug::new("o", "r"), None).await.unwrap_err();
+        assert!(matches!(e.kind(), ErrorKind::ServerError { .. }), "{e:?}");
+    }
+
+    /// Bug this prevents: one request per file and no more — `--limit` caps the *requests* by
+    /// capping the slice this is given, and a concurrent read that fanned out over everything
+    /// `discover` found would quietly undo that.
+    ///
+    /// The pairing is asserted alongside it, because the failure mode of getting the ordering
+    /// wrong is a plausible-looking table with each row's `DISPATCH`/`RUNS-ON` columns taken from
+    /// a different file. That half cannot fail here — `FakeTransport` resolves without ever
+    /// returning `Pending`, so even `buffer_unordered` comes back in order (the same caveat
+    /// `forgejo_core::capabilities`' own concurrency test records) — and it is written down so
+    /// that the pairing is at least stated where the code that must preserve it can be read.
+    #[tokio::test]
+    async fn every_workflow_file_is_read_once_and_the_bodies_stay_in_path_order() {
+        let fake = Arc::new(
+            FakeTransport::new()
+                .on(
+                    "GET".parse().unwrap(),
+                    "/api/v1/repos/o/r/raw/.forgejo/workflows/a.yml",
+                    Canned::text(
+                        200,
+                        "name: A
+on: push
+",
+                    ),
+                )
+                .on(
+                    "GET".parse().unwrap(),
+                    "/api/v1/repos/o/r/raw/.forgejo/workflows/b.yml",
+                    Canned::text(
+                        200,
+                        "name: B
+on: push
+",
+                    ),
+                )
+                .on(
+                    "GET".parse().unwrap(),
+                    "/api/v1/repos/o/r/raw/.forgejo/workflows/c.yml",
+                    Canned::text(
+                        200,
+                        "name: C
+on: push
+",
+                    ),
+                ),
+        );
+        let entries: Vec<ContentsResponse> = ["a.yml", "b.yml", "c.yml"]
+            .iter()
+            .map(|n| ContentsResponse {
+                name: (*n).to_owned(),
+                path: format!(".forgejo/workflows/{n}"),
+                r#type: "file".to_owned(),
+                ..Default::default()
+            })
+            .collect();
+
+        let parsed = read_all(&api_for(fake.clone()), &RepoSlug::new("o", "r"), &entries, None)
+            .await
+            .unwrap();
+        let names: Vec<String> =
+            parsed.iter().zip(&entries).map(|(p, e)| p.display_name(&e.path)).collect();
+        assert_eq!(names, ["A", "B", "C"], "the bodies came back paired with the wrong files");
+        assert_eq!(fake.call_count(), entries.len());
+    }
+
     /// Bug this prevents: every directory 404ing because the *repository* is gone, and the command
     /// cheerfully reporting "no workflows" — which sends the user looking for the wrong bug.
     #[tokio::test]
@@ -757,8 +926,14 @@ mod tests {
             .unwrap();
         assert_eq!(started.id, 12);
 
-        let sent = fake.calls()[0].body.clone().expect("a JSON body");
-        let sent: Value = serde_json::from_slice(&sent).unwrap();
+        // Matched on path, not on `calls()[0]`: an assertion that depends on *arrival order* is
+        // one concurrent request away from going flaky instead of failing honestly.
+        let posted = fake
+            .calls()
+            .into_iter()
+            .find(|c| c.path == "/api/v1/repos/o/r/actions/workflows/ci.yml/dispatches")
+            .expect("the dispatch POST");
+        let sent: Value = serde_json::from_slice(&posted.body.expect("a JSON body")).unwrap();
         // Every input is a string on the wire, `-F verbose=true` included: that is what
         // `DispatchWorkflowOption.inputs` is, and a boolean here is rejected by the server.
         assert_eq!(sent["inputs"]["environment"], "staging");

@@ -77,6 +77,64 @@ pub fn query(s: &str) -> Cow<'_, str> {
     encode(s, b"")
 }
 
+/// Decode a query-string key or value the way the server will read it.
+///
+/// The inverse of [`query`], and it exists for one job: a query string a *user* typed has to be
+/// re-emitted through [`query_string`] without double-encoding. `?q=a%20b` must reach the
+/// instance as `q=a%20b`; feeding the raw `a%20b` back through [`query`] yields `a%2520b`, a
+/// literal search for the six characters `a%20b`.
+///
+/// `+` decodes to a space, because that is what a Go server's `r.URL.Query()` does. Preserving
+/// it as a literal `+` would keep *our* bytes intact at the cost of changing the value the
+/// instance actually sees. Re-encoding then spells that space `%20`, which Go reads back as a
+/// space: the round trip preserves the meaning rather than the spelling.
+///
+/// A `%` that does not begin a valid escape stays a literal `%` — what browsers do, and what
+/// whoever typed `?q=100%` meant; it re-encodes to `%25`, so the instance receives the percent
+/// sign they asked for. [`None`] is returned only for escapes that decode to bytes which are not
+/// UTF-8 and therefore cannot be carried in the `String` a query list holds.
+pub fn decode_query(s: &str) -> Option<Cow<'_, str>> {
+    if !s.contains(['%', '+']) {
+        // The overwhelmingly common case: nothing to decode, and no allocation.
+        return Some(Cow::Borrowed(s));
+    }
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            b'%' if i + 2 < b.len() => match (unhex(b[i + 1]), unhex(b[i + 2])) {
+                (Some(hi), Some(lo)) => {
+                    out.push((hi << 4) | lo);
+                    i += 3;
+                }
+                _ => {
+                    out.push(b'%');
+                    i += 1;
+                }
+            },
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).ok().map(Cow::Owned)
+}
+
+const fn unhex(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
 /// Encode a `application/x-www-form-urlencoded` body value, where `+` for space is the
 /// convention. Used only for [`super::Body::Form`].
 pub fn form(s: &str) -> String {
@@ -168,6 +226,46 @@ mod tests {
     fn query_string_keeps_repeated_keys_in_order() {
         let q = query_string([("labels", "bug"), ("labels", "ci"), ("state", "open")]);
         assert_eq!(q, "labels=bug&labels=ci&state=open");
+    }
+
+    /// The double-encoding bug: a query a user typed is decoded before it re-enters the
+    /// structured list, so `?q=a%20b` leaves through [`query_string`] as `q=a%20b` and not as
+    /// `q=a%2520b` — a literal search for the six characters `a%20b`.
+    #[test]
+    fn a_user_typed_escape_survives_a_decode_and_re_encode_round_trip() {
+        for typed in ["a%20b", "c%2B%2B", "plain", "%C3%A9", "a%2Fb", "100%25"] {
+            let decoded = decode_query(typed).expect("valid UTF-8");
+            assert_eq!(query(&decoded), typed, "round trip of {typed}");
+        }
+    }
+
+    /// `+` means space to a Go server, so decoding it as a literal `+` would preserve our bytes
+    /// while changing the value the instance searches for. The spelling moves to `%20`; the
+    /// meaning does not move at all.
+    #[test]
+    fn plus_decodes_to_space_because_that_is_what_the_server_reads() {
+        assert_eq!(decode_query("a+b").unwrap(), "a b");
+        assert_eq!(query(&decode_query("a+b").unwrap()), "a%20b");
+        // And a `+` the user escaped is a real `+`, which must survive as one.
+        assert_eq!(decode_query("c%2B%2B").unwrap(), "c++");
+    }
+
+    /// A stray `%` is what someone typing `?q=100%` meant, not an error. It re-encodes to
+    /// `%25`, so the instance receives the percent sign rather than a truncated term.
+    #[test]
+    fn a_stray_percent_is_a_literal_percent() {
+        assert_eq!(decode_query("100%").unwrap(), "100%");
+        assert_eq!(decode_query("%zz").unwrap(), "%zz");
+        assert_eq!(query(&decode_query("100%").unwrap()), "100%25");
+    }
+
+    /// An escape that decodes to non-UTF-8 has no `String` representation, so it is reported
+    /// rather than silently replaced — a lossy `U+FFFD` would re-encode to three bytes the user
+    /// never typed.
+    #[test]
+    fn a_non_utf8_escape_is_reported_rather_than_mangled() {
+        assert!(decode_query("%FF").is_none());
+        assert!(decode_query("ok%C3%28").is_none());
     }
 
     #[test]

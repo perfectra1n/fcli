@@ -60,7 +60,9 @@ pub async fn walk(client: &Client, base: &Request, limit: Option<usize>) -> Resu
         let (values, info): (Vec<Value>, PageInfo) = client.page(req).await?;
         let keep = paginator.keep(values.len());
         items += keep;
-        pages.push(Value::Array(values.iter().take(keep).cloned().collect()));
+        // `into_iter`, not `iter().cloned()`: `values` is dead after this line — only `info` is
+        // read below — so cloning deep-copies every retained JSON tree to drop the original.
+        pages.push(Value::Array(values.into_iter().take(keep).collect()));
 
         match paginator.advance(&info)? {
             Next::Stop(reason) => break reason,

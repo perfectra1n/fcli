@@ -400,10 +400,27 @@ async fn classic(
         head: Some(head.clone()),
         ..CreatePullRequestOption::default()
     };
-    body.assignees = Some(support::resolve_me(api, &args.assignee).await?);
-    body.labels = Some(common::label_ids(api, slug, &args.label).await?);
-    if let Some(title) = &args.milestone {
-        body.milestone = Some(common::milestone_id(api, slug, title).await?);
+    // Three read-only lookups that depend on nothing but the command line, so they run at the
+    // same time instead of back to back.
+    //
+    // `join!` with a fixed unwrap order rather than `try_join!`, and that is a correctness
+    // choice, not a stylistic one: `try_join!` returns the first error to *occur*, so
+    // `-a nobody -l nope` would report a different problem depending on which response the
+    // network delivered first. Unwrapped in the order the requests used to be made in, the
+    // command reports exactly what it always reported.
+    let resolve_assignees = support::resolve_me(api, &args.assignee);
+    let resolve_labels = common::label_ids(api, slug, &args.label);
+    let resolve_milestone = async {
+        match &args.milestone {
+            Some(title) => common::milestone_id(api, slug, title).await.map(Some),
+            None => Ok(None),
+        }
+    };
+    let resolved = futures::join!(resolve_assignees, resolve_labels, resolve_milestone);
+    body.assignees = Some(resolved.0?);
+    body.labels = Some(resolved.1?);
+    if let Some(id) = resolved.2? {
+        body.milestone = Some(id);
     }
 
     if args.dry_run {

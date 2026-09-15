@@ -15,6 +15,7 @@ use clap::Args as ClapArgs;
 use forgejo_core::config::secrets::CredentialStore;
 use forgejo_core::config::{HostEntry, HostKey};
 use forgejo_core::error::{Error, ErrorKind, Result, TokenSource, render};
+use forgejo_core::http::Client;
 use serde_json::{Value, json};
 
 use super::common::{self, Setup};
@@ -65,6 +66,13 @@ Returns a nonzero exit code if any host fails authentication. With --json, retur
 0 and includes authentication failures in the report.
 
 Shows token locations, never token values. Use `fcli auth token` to print a token.";
+
+/// How many hosts `status` checks at once.
+///
+/// Bounded rather than "all of them" for a reason the single-host loops do not have: each check is
+/// a *different* server, so a wide fan-out is a wide fan-out of TLS handshakes from one CLI
+/// process. Eight covers every realistic `hosts.toml` in one wave without behaving like a scanner.
+const HOSTS_AT_ONCE: usize = 8;
 
 /// One (host, login) pair, checked.
 struct Row {
@@ -123,15 +131,26 @@ pub fn run(globals: &GlobalOpts, _args: &Args) -> Result<()> {
         return Err(Error::new(ErrorKind::NoHostConfigured));
     }
 
+    // Phase 1, serial and deliberately so. `Credentials::token` takes `&mut setup.hosts` because
+    // it records which store actually answered, and `take_warnings` drains onto stderr — both are
+    // order-sensitive, and neither touches the network, so there is nothing here to overlap.
+    let mut pending: Vec<Pending> = Vec::new();
+    for key in &selected {
+        pending.extend(plan_host(&mut setup, key, globals.login.as_deref()));
+    }
+
+    // Phase 2, concurrent. This is the only part that talks to a server, and it is the one loop in
+    // fcli where every iteration targets a *different* host: `common::client_for` builds with the
+    // default `RetryPolicy`, so one decommissioned instance still in `hosts.toml` used to burn its
+    // whole connect-timeout × retry budget before the next host was even tried — which is why a
+    // stale entry made `fcli auth status` look hung rather than slow.
+    //
     // `rows` is filled by reference rather than returned: `runtime::block_on` is typed
     // `Future<Output = Result<()>>` and borrows nothing, so a plain `&mut` out-parameter is the
     // whole adaptation needed.
     let mut rows: Vec<Row> = Vec::new();
     crate::runtime::block_on(async {
-        for key in &selected {
-            let checked = check_host(&mut setup, key, globals.login.as_deref()).await;
-            rows.extend(checked);
-        }
+        rows = check_all(pending).await;
         Ok(())
     })?;
 
@@ -162,8 +181,57 @@ pub fn run(globals: &GlobalOpts, _args: &Args) -> Result<()> {
     }
 }
 
-/// Every login on one host, checked against `GET /user`.
-async fn check_host(setup: &mut Setup, key: &HostKey, only: Option<&str>) -> Vec<Row> {
+/// A [`Row`] with its `GET /user` still outstanding.
+///
+/// Exists only to carry phase 1's result across into phase 2. `Row` cannot do that job itself: its
+/// `outcome` is precisely the thing phase 2 produces, and the credential work that fills the other
+/// fields interleaves borrowed data (`setup.hosts`) with owned data in a way that will not survive
+/// being held across an `.await` in a concurrent stream. Everything here is therefore owned.
+struct Pending {
+    host: HostKey,
+    url: String,
+    login: String,
+    active: bool,
+    active_host: bool,
+    store: CredentialStore,
+    source: Option<TokenSource>,
+    scopes: Vec<String>,
+    /// The client to ask `GET /user` with, or the failure that already settled this row — no
+    /// token, an unusable URL. An `Err` here becomes the row's `outcome` untouched, so phase 2
+    /// never has to re-derive a diagnosis phase 1 already made.
+    check: std::result::Result<Client, Error>,
+}
+
+/// Every pending row's `GET /user`, concurrently, answering in the order they were planned.
+///
+/// `buffered`, never `buffer_unordered`, and the exit code is the reason rather than tidiness:
+/// `run` takes the *first* failing row's error as the process's error, and `write_human` groups
+/// stanzas by host. Under `buffer_unordered` the row that answered first would become the row that
+/// decides both — so a script's exit code would depend on which of two broken hosts was slower,
+/// and the human report would interleave hosts. `buffered` yields in input order, which is
+/// `hosts.toml` order, which is what both of those behaviours were already promising.
+async fn check_all(pending: Vec<Pending>) -> Vec<Row> {
+    use futures::StreamExt;
+
+    futures::stream::iter(pending)
+        .map(|p| async move {
+            let Pending { host, url, login, active, active_host, store, source, scopes, check } = p;
+            let outcome = match check {
+                Ok(client) => common::whoami(&client).await.map(|u| u.is_admin),
+                Err(e) => Err(e),
+            };
+            Row { host, url, login, active, active_host, store, source, scopes, outcome }
+        })
+        .buffered(HOSTS_AT_ONCE)
+        .collect()
+        .await
+}
+
+/// Every login on one host, resolved down to "which client would check this row".
+///
+/// Synchronous on purpose — see the phase-1 comment in [`run`]. The network call this used to make
+/// inline is now the `check` field, handed to [`check_all`].
+fn plan_host(setup: &mut Setup, key: &HostKey, only: Option<&str>) -> Vec<Pending> {
     let Some(entry) = setup.hosts.get(key) else { return Vec::new() };
     let url = entry.url.clone();
     let active_login = entry.active_login.clone();
@@ -184,24 +252,23 @@ async fn check_host(setup: &mut Setup, key: &HostKey, only: Option<&str>) -> Vec
             common::warn(&kind);
         }
 
-        let (source, outcome) = match token {
+        let (source, check) = match token {
             Err(e) => (None, Err(e)),
             Ok(None) => {
                 (None, Err(Error::new(ErrorKind::NotAuthenticated { host: key.to_string() })))
             }
             Ok(Some(t)) => {
                 let source = t.source().clone();
-                let outcome = match HostEntry::from_input(&url)
-                    .and_then(|e| common::client_for(&e, t.expose(), source.clone()))
-                {
-                    Ok(client) => common::whoami(&client).await.map(|u| u.is_admin),
-                    Err(e) => Err(e),
-                };
-                (Some(source), outcome)
+                // The token is read here and never outlives this expression: what crosses into
+                // phase 2 is a built `Client` with the header already in it, so `Pending` carries
+                // no secret a `Debug` or a panic message could reach.
+                let check = HostEntry::from_input(&url)
+                    .and_then(|e| common::client_for(&e, t.expose(), source.clone()));
+                (Some(source), check)
             }
         };
 
-        rows.push(Row {
+        rows.push(Pending {
             host: key.clone(),
             url: url.clone(),
             login: login.clone(),
@@ -210,12 +277,12 @@ async fn check_host(setup: &mut Setup, key: &HostKey, only: Option<&str>) -> Vec
             store,
             source,
             scopes,
-            outcome,
+            check,
         });
     }
 
     if rows.is_empty() {
-        rows.push(Row {
+        rows.push(Pending {
             host: key.clone(),
             url,
             login: only.unwrap_or_default().to_owned(),
@@ -224,7 +291,7 @@ async fn check_host(setup: &mut Setup, key: &HostKey, only: Option<&str>) -> Vec
             store: setup.hosts.cached_store(key).unwrap_or_default(),
             source: None,
             scopes: Vec::new(),
-            outcome: Err(Error::new(ErrorKind::NotAuthenticated { host: key.to_string() })),
+            check: Err(Error::new(ErrorKind::NotAuthenticated { host: key.to_string() })),
         });
     }
     rows

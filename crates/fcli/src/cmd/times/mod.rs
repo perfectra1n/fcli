@@ -254,11 +254,6 @@ async fn add(rt: &Runtime, api: &Api, globals: &GlobalOpts, args: &AddArgs) -> R
 async fn list(rt: &Runtime, api: &Api, globals: &GlobalOpts, args: &ListArgs) -> Result<()> {
     let since = args.from.as_deref().map(parse_when).transpose()?;
     let before = args.until.as_deref().map(parse_when).transpose()?;
-    let user = match (&args.user, args.mine) {
-        (Some(u), _) => Some(porcelain::resolve_user(rt, u).await?),
-        (None, true) => Some(porcelain::me(rt).await?),
-        (None, false) => None,
-    };
 
     // `--total` has to sum every entry in scope, not the first page of them: a total that
     // silently covers 30 of 400 entries is worse than no total at all. So the default limit of
@@ -266,11 +261,34 @@ async fn list(rt: &Runtime, api: &Api, globals: &GlobalOpts, args: &ListArgs) ->
     let take = if args.total { globals.limit } else { porcelain::item_limit(globals) }
         .unwrap_or(usize::MAX);
 
-    // `--all` reaches `/user/times`, which needs no repository — so resolution is only attempted
-    // for the other two scopes, and `fcli times list --all` works from a home directory.
-    let slug = if args.all { None } else { Some(rt.repo(globals)?.slug.clone()) };
-    let scope = Scope { all: args.all, slug, issue: args.issue };
-    let times = collect(api, &scope, user.as_deref(), since, before, take).await?;
+    let times = if args.all {
+        // `--all` reaches `/user/times`, which needs no repository — so repository resolution is
+        // never attempted, and `fcli times list --all` works from a home directory.
+        let scope = Scope { all: true, slug: None, issue: args.issue };
+
+        // Independent reads, so they overlap. `/user/times` takes no `user` parameter — it is
+        // inherently the caller's — so the login behind `--user @me` / `--mine` is only ever a
+        // client-side filter, and nothing in the request depends on knowing it first. The other
+        // two scopes *do* put `user` on the query, which is why only this branch joins.
+        //
+        // `join!` with an unwrap in a fixed order rather than `try_join!`: `try_join!` surfaces
+        // whichever error happened to occur first, so a host that failed both reads would report a
+        // different message run to run. Resolving the login is what a sequential `list` attempted
+        // first, so its error stays first.
+        let (user, times) =
+            futures::join!(wanted_user(rt, args), collect(api, &scope, None, since, before, take));
+        let user = user?;
+        let mut times = times?;
+        // Applied here rather than passed into `collect`, because the filter is the whole reason
+        // the login was needed and `collect` no longer learns it in time.
+        retain_user(&mut times, user.as_deref());
+        times
+    } else {
+        let user = wanted_user(rt, args).await?;
+        let scope =
+            Scope { all: false, slug: Some(rt.repo(globals)?.slug.clone()), issue: args.issue };
+        collect(api, &scope, user.as_deref(), since, before, take).await?
+    };
 
     if args.total {
         return write_total(rt, globals, &times);
@@ -290,6 +308,29 @@ async fn list(rt: &Runtime, api: &Api, globals: &GlobalOpts, args: &ListArgs) ->
     let seconds: i64 = times.iter().map(|e| e.time).sum();
     porcelain::note(rt.term(), &format!("Total: {}", duration::format(seconds)));
     Ok(())
+}
+
+/// The login `list` should narrow to, or `None` for everyone's entries.
+///
+/// `--user` wins over `--mine` because naming someone is the more specific request; `--mine` is
+/// spelled `@me` through the same resolver so both paths agree on what "me" means.
+async fn wanted_user(rt: &Runtime, args: &ListArgs) -> Result<Option<String>> {
+    match (&args.user, args.mine) {
+        (Some(u), _) => Ok(Some(porcelain::resolve_user(rt, u).await?)),
+        (None, true) => Ok(Some(porcelain::me(rt).await?)),
+        (None, false) => Ok(None),
+    }
+}
+
+/// Drop the entries that are not `user`'s.
+///
+/// Only ever needed for `/user/times`, which has no `user` query parameter. Shared between
+/// [`collect`] and its `--all` caller so the two cannot drift into disagreeing about what
+/// `--user bob` means.
+fn retain_user(times: &mut Vec<TrackedTime>, user: Option<&str>) {
+    if let Some(u) = user {
+        times.retain(|t| t.user_name == u);
+    }
 }
 
 /// Which of the three tracked-time collections to read.
@@ -327,9 +368,7 @@ pub(crate) async fn collect(
         }
         // `/user/times` has no `user` parameter — it is inherently yours — so `--user` there can
         // only be a filter applied after the fact.
-        if let Some(u) = user {
-            out.retain(|t| t.user_name == u);
-        }
+        retain_user(&mut out, user);
         return Ok(out);
     }
 
@@ -627,6 +666,55 @@ mod tests {
             "the endpoint has no user parameter: {}",
             call.query
         );
+    }
+
+    /// The same property once the `--all` branch stops telling `collect` who it is looking for.
+    ///
+    /// Bug this prevents: overlapping the `GET /user` with the times walk and losing the filter in
+    /// the move. `list` now joins the two, so `collect` is handed `None` and applies nothing — if
+    /// the call site forgot [`retain_user`], `--all --user bob` would quietly report everyone's
+    /// hours under bob's name, and the request would still look correct on the wire.
+    #[tokio::test]
+    async fn the_all_scope_still_filters_by_user_when_the_login_is_resolved_alongside_it() {
+        let fake = Arc::new(FakeTransport::new().on(
+            testing::method("GET"),
+            "/api/v1/user/times",
+            testing::one_page(ENTRIES),
+        ));
+        let api = testing::api(fake.clone());
+        let scope = Scope { all: true, slug: None, issue: None };
+
+        // Exactly what the joined call site does: walk with no user, then filter.
+        let mut out = collect(&api, &scope, None, None, None, 30).await.unwrap();
+        assert!(out.len() > 1, "the fixture has to contain somebody else's entry to be a test");
+        retain_user(&mut out, Some("bob"));
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].user_name, "bob");
+
+        // And knowing the login early buys nothing on the wire, which is what makes the join safe.
+        let call = &fake.calls_to(&testing::method("GET"), "/api/v1/user/times")[0];
+        assert!(
+            !call.query.contains("user="),
+            "the endpoint has no user parameter: {}",
+            call.query
+        );
+    }
+
+    /// `--all --mine` is the degenerate case: `/user/times` is already only yours, so the filter
+    /// matches every row. It is kept anyway rather than special-cased, because the `GET /user` it
+    /// depends on is also what proves the token still belongs to the login it claims.
+    #[test]
+    fn filtering_the_all_scope_by_your_own_login_keeps_everything() {
+        let mut mine: Vec<TrackedTime> =
+            entries().into_iter().map(|t| TrackedTime { user_name: "alice".into(), ..t }).collect();
+        let before = mine.len();
+        retain_user(&mut mine, Some("alice"));
+        assert_eq!(mine.len(), before);
+        // And `None` is not a filter at all.
+        let mut all = entries();
+        let before = all.len();
+        retain_user(&mut all, None);
+        assert_eq!(all.len(), before);
     }
 
     /// Bug this prevents: `add` sending the duration as the user typed it, or in minutes. The API
