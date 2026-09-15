@@ -651,8 +651,8 @@ impl Client {
     ///
     /// The obvious simplification — make `caps` itself a `tokio::sync::Mutex` and hold it across
     /// the probe — **deadlocks on the instances this module exists to tolerate**. The path is:
-    /// [`capabilities::probe`] → [`Client::json`] → [`Client::send`] → a non-2xx →
-    /// [`Client::error_from`] → [`Client::cached_caps`], which locks `caps`. A `403` or `404`
+    /// `capabilities::probe` → [`Client::json`] → `Client::send` → a non-2xx →
+    /// `Client::error_from` → `Client::cached_caps`, which locks `caps`. A `403` or `404`
     /// from `/settings/api` is the *documented common case* (see the [`capabilities`] module
     /// header), so the probe re-enters that lock on exactly the deployments — older instances,
     /// instances requiring auth for everything — that need to keep working. A separate gate
