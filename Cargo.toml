@@ -89,7 +89,7 @@ jaq-std = "3"
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "3", features = ["full", "parsing", "printing"] }
-prettyplease = "0.2"
+prettyplease = "0.3"
 heck = "0.5"
 sha2 = "0.11"
 
