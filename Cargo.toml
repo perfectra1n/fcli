@@ -50,7 +50,7 @@ http = "1"
 # `Box::leak` every one of them.
 clap = { version = "4.6", features = ["derive", "wrap_help", "env", "string"] }
 clap_complete = "4.6"
-clap_mangen = "0.2"
+clap_mangen = "0.3"
 anstyle = "1"
 anstream = "1"
 terminal_size = "0.4"
