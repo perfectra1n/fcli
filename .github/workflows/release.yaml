@@ -2,8 +2,14 @@
 # yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
 name: Release
 #
-# Tag-driven. `git tag v0.1.0 && git push --tags` builds the five supported
-# targets and attaches them to a GitHub Release.
+# Builds the five supported targets and attaches them to a GitHub Release that
+# release-please has already created.
+#
+# Normally this is not started by a tag push. release-please owns the version and
+# cuts the release, then dispatches this workflow at the new tag, because GitHub
+# will not let a GITHUB_TOKEN-raised event start another workflow. See
+# release-please.yaml. The `push: tags` trigger below is kept so a tag pushed by
+# hand still works as an escape hatch.
 #
 # Unlike ci.yaml this does NOT go through mise. mise is the task runner for the
 # gates; a release is plain `cargo build`, and the toolchain still comes from one
@@ -35,10 +41,15 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Tag matches crates/fjo/Cargo.toml
+      # Reads .release-please-manifest.json, not crates/fjo/Cargo.toml. release-please
+      # runs as release-type `simple` (the Rust strategy throws on this repo's virtual
+      # workspace manifest), so it owns the version in that JSON file and never edits a
+      # Cargo.toml. The crate versions therefore no longer track the tag, and checking
+      # one here would fail every release.
+      - name: Tag matches .release-please-manifest.json
         run: |
           set -euo pipefail
-          manifest="$(grep -m1 '^version' crates/fjo/Cargo.toml | cut -d'"' -f2)"
+          manifest="$(jq -r '."."' .release-please-manifest.json)"
           tag="${GITHUB_REF_NAME#v}"
           echo "manifest=$manifest tag=$tag"
           if [ "$manifest" != "$tag" ]; then
@@ -187,5 +198,8 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
-          generate_release_notes: true
+          # false, because release-please already wrote this release's body from the
+          # CHANGELOG. Leaving it true makes action-gh-release overwrite that with
+          # GitHub's auto-generated commit list when it attaches the archives.
+          generate_release_notes: false
           fail_on_unmatched_files: true
