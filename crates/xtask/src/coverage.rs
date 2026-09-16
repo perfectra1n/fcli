@@ -357,11 +357,10 @@ fn validate_ids(
     if !bad.is_empty() {
         bail!(
             "these coverage claims name nothing that exists:\n{}\n\n\
-             A raw id must be an operationId from {}; a porcelain id must be a leaf command \
-             path such as \"pr list\". If a spec bump renamed the operation, the rename is in \
-             that file's diff.",
+             A raw id must be an operationId from spec/name-lock.toml; a porcelain id must be \
+             a leaf command path such as \"pr list\". If a spec bump renamed the operation, the \
+             rename is in that file's diff.",
             bad.join("\n"),
-            spec::name_lock_path(Path::new(".")).display()
         );
     }
     Ok(())
