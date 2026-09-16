@@ -7,7 +7,7 @@
 # Kept in lockstep with rust-toolchain.toml, which stays the source of truth for
 # anyone running bare `cargo` without mise. Bump both together — a mismatch is
 # silent, because rustup honours the toolchain file and mise honours this one.
-rust = { version = "1.95.0", components = "rustfmt,clippy" }
+rust = { version = "1.98.1", components = "rustfmt,clippy" }
 # deny.toml is checked in and `mise run deny` is a CI gate; pin the checker so a
 # new advisory-db schema or lint default cannot turn CI red on an unrelated PR.
 "aqua:EmbarkStudios/cargo-deny" = "0.20.2"
