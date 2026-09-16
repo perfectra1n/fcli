@@ -12,7 +12,16 @@ mise run support-check     # non-admin modules reaching into cmd/admin/support
 mise run zero-check        # zero values written into omittable request-body fields
 mise run complexity-check  # functions over the cognitive-complexity threshold
 mise run budget-check      # startup latency and release binary size
+mise run coverage-check    # commands never driven against a real Forgejo (needs Docker)
 ```
+
+`coverage-check` is the one ratchet that is not a text scan, and deliberately so —
+see [the design note](superpowers/specs/2026-09-16-command-coverage-design.md). The
+integration suite *skips and passes* when Docker is missing, so a scan of the test
+sources would report full coverage over a suite that executed nothing. It therefore
+counts journals the tests write **as they run**, and it is excluded from
+`mise run ratchets` (which must stay fast and Docker-free) and runs in CI's
+integration job instead.
 
 ## Why a count budget, and not a threshold
 

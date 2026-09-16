@@ -329,12 +329,19 @@ footer) bumps the minor rather than the major.
   `mise run support-check` is at zero. **Do not add a seventh**, and when the next shared file is
   contended, add a module under `cmd/support/` rather than reaching into the nearest existing
   home — that is the exact mechanism the gate exists to refuse.
-- **Verification is uneven.** Most porcelain groups have only been driven through
-  `FakeTransport` and `insta` snapshots, never against a real server. A green `cargo test` is not
-  evidence that the wire format is right. The README's
-  [Status](README.md#status) section says which groups are which;
-  if you touch one of the unverified groups, `cargo xtask itest` is the thing that would actually
-  find the bug.
+- **Verification is uneven, and now it is measured.** Most porcelain groups have only been
+  driven through `FakeTransport` and `insta` snapshots, never against a real server. A green
+  `cargo test` is not evidence that the wire format is right. `mise run coverage-check` prints
+  exactly how uneven: how many of the 506 generated operations and 244 porcelain leaves have
+  ever been driven against a real Forgejo, and `cargo xtask coverage-check --list` names the
+  ones that have not. If you touch an uncovered command, that list is where to start, and
+  `cargo xtask itest` is the thing that would actually find the bug.
+- **A live test declares what it drove.** `cover!(porcelain: [..], hits: [..])` inside the test
+  body, after `instance_or_skip!`, is what the ratchet counts — see
+  [the design note](docs/superpowers/specs/2026-09-16-command-coverage-design.md) for why the
+  count comes from a runtime journal rather than a source scan. Claim only what the test really
+  exercised: an honest uncovered count is the product, and an id that names nothing fails the
+  gate rather than quietly crediting zero.
 
 ## Conventions
 
@@ -359,6 +366,7 @@ mise run codegen-check        # the generated tree still matches the spec
 mise run ratchets             # all four count budgets
 mise run budget-check         # startup latency and binary size
 mise run itest                # boot a throwaway Forgejo in Docker and test against it
+mise run coverage-check       # itest, plus the ratchet over what it actually drove
 mise run ci                   # all of the above, in CI's order
 ```
 

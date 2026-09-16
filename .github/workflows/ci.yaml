@@ -160,5 +160,11 @@ jobs:
       # Deliberately NOT nextest: the harness shares one Forgejo container per
       # process, and nextest runs every test in its own process, so it would boot
       # 24 containers. `mise run itest` -> `cargo xtask itest` -> `cargo test`.
-      # This job is what covers the 24 tests the nextest default profile filters out.
-      - run: mise run itest
+      # This job is what covers the tests the nextest default profile filters out.
+      #
+      # `coverage-check` rather than `itest`: it runs the hermetic contract tests (which
+      # write the porcelain inventory and the 506-operation contract journal), then
+      # `cargo xtask itest` exactly as before, then the ratchet over what both actually
+      # drove. The integration suite is therefore run once, not twice, and the run ends
+      # with a number instead of only a tick.
+      - run: mise run coverage-check
