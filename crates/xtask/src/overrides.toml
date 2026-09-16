@@ -42,7 +42,7 @@ demote_required = []
 # Forgejo's 506 operationIds are camelCase except for 16 that are PascalCase, all of them
 # Actions or Git plumbing. Those 16 have no `<group>` prefix word, so the mangler would fall
 # back to `tags[0]` — which for all of them is `repository`. That is technically correct and
-# practically awful: `fcli raw repo list-action-runs` instead of `fcli raw run list`, with the
+# practically awful: `fjo raw repo list-action-runs` instead of `fjo raw run list`, with the
 # Actions surface scattered through a 198-command group.
 #
 # `gh` calls these `gh run` and `gh workflow`, and layer 3's porcelain will too, so putting
@@ -236,7 +236,7 @@ IssueFormFieldVisible = ["form", "content"]
 [scope]
 
 # ---------------------------------------------------------------------------------------------
-# [group_doc] — one-liners for `fcli raw --help`
+# [group_doc] — one-liners for `fjo raw --help`
 # ---------------------------------------------------------------------------------------------
 [group_doc]
 repo = "Repositories, pull requests, issues, contents, releases and everything under /repos"

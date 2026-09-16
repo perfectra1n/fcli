@@ -1,9 +1,0 @@
----
-source: crates/fcli/src/cmd/milestone.rs
-expression: text(&buf)
----
-Showing 2 open milestones in perf3ct/fcli
-
-TITLE  STATE  OPEN  CLOSED  DUE         UPDATED
-1.0    open   2     3       2026-12-31  —
-2.0    open   0     0       —           —

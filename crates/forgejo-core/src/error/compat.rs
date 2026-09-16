@@ -6,7 +6,7 @@
 //! silence would also hide a real signal, so every such event is recorded here and `main`
 //! drains the set into a single grouped note on stderr.
 //!
-//! The note never changes the exit code. Suppress it with `FCLI_NO_COMPAT_NOTES=1`.
+//! The note never changes the exit code. Suppress it with `FJO_NO_COMPAT_NOTES=1`.
 
 use std::collections::BTreeSet;
 use std::sync::{Mutex, OnceLock};
@@ -78,7 +78,7 @@ pub fn forget() {
 }
 
 pub fn is_suppressed() -> bool {
-    std::env::var_os("FCLI_NO_COMPAT_NOTES").is_some_and(|v| !v.is_empty() && v != "0")
+    std::env::var_os("FJO_NO_COMPAT_NOTES").is_some_and(|v| !v.is_empty() && v != "0")
 }
 
 #[cfg(test)]

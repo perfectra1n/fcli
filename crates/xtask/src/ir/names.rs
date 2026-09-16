@@ -257,7 +257,7 @@ fn sanitize(s: &str) -> Ident {
 /// The four names one operation contributes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OpName {
-    /// Layer-2 group, as typed: `fcli raw <group> <command>`.
+    /// Layer-2 group, as typed: `fjo raw <group> <command>`.
     pub group: String,
     /// Layer-2 command, kebab-case.
     pub command: String,
@@ -351,7 +351,7 @@ pub fn check_unique(names: &[(String, OpName)]) -> Result<()> {
     for ((group, command), ids) in &by_command {
         if ids.len() > 1 {
             report.push_str(&collision_note(
-                &format!("command `fcli raw {group} {command}`"),
+                &format!("command `fjo raw {group} {command}`"),
                 ids,
                 names,
             ));
@@ -522,7 +522,7 @@ mod tests {
 
     #[test]
     fn collision_detector_names_both_operations_and_the_fix() {
-        // Fed a synthetic collision: two operations that both want `fcli raw repo get`. The
+        // Fed a synthetic collision: two operations that both want `fjo raw repo get`. The
         // real spec has none, which is exactly why this has to be tested synthetically —
         // otherwise the detector is dead code that nobody has ever seen run.
         let dup = OpName {
@@ -538,7 +538,7 @@ mod tests {
         assert!(err.contains("repoGet"), "must name the first offender: {err}");
         assert!(err.contains("repoFetch"), "must name the second offender: {err}");
         assert!(err.contains("[op.repoGet]"), "must paste the fix: {err}");
-        assert!(err.contains("fcli raw repo get"), "must name the colliding command: {err}");
+        assert!(err.contains("fjo raw repo get"), "must name the colliding command: {err}");
         assert!(err.contains("repo::get"), "must name the colliding function: {err}");
     }
 

@@ -9,10 +9,9 @@
 //! Part 3 is the one that matters and the one every CLI skips. An error that says "403 Forbidden"
 //! is a transcription of the wire; an error that says "Forgejo token scopes are fixed at creation
 //! — create a NEW token that includes `write:issue` at the instance's token page, then
-//! `fcli auth login`" is the
-//! answer. A test at the bottom of this file iterates **every** [`ErrorKind`] variant and asserts
-//! its rendering contains a "what to do" section with a runnable command, so a new variant
-//! physically cannot ship without a remedy.
+//! `fjo auth login`" is the answer. A test at the bottom of this file iterates **every**
+//! [`ErrorKind`] variant and asserts its rendering contains a "what to do" section with a
+//! runnable command, so a new variant physically cannot ship without a remedy.
 //!
 //! Two rules keep the voice consistent:
 //!
@@ -104,7 +103,7 @@ impl Line {
         Self { frags: vec![Frag::Plain(s.into())], hang: 0 }
     }
 
-    /// A numbered bullet whose body is a command: `1. fcli auth login --host x`.
+    /// A numbered bullet whose body is a command: `1. fjo auth login --host x`.
     fn step(n: usize, cmd: impl Into<String>) -> Self {
         Self { frags: vec![Frag::Plain(format!("{n}. ")), Frag::Cmd(cmd.into())], hang: 0 }
     }
@@ -411,7 +410,7 @@ pub fn render(err: &Error, color: Color) -> String {
     out
 }
 
-/// `POST /api/v1/repos/perf3ct/fcli/issues`
+/// `POST /api/v1/repos/perf3ct/fjo/issues`
 fn request_line(ctx: &RequestCtx) -> Option<String> {
     let path = ctx.path.as_deref()?;
     Some(match &ctx.method {
@@ -421,7 +420,7 @@ fn request_line(ctx: &RequestCtx) -> Option<String> {
 }
 
 /// Where the credential came from. This is the difference between "your token was rejected" and
-/// "the token in your keyring under `fcli:git.example.org` was rejected" — the second tells the
+/// "the token in your keyring under `fjo:git.example.org` was rejected" — the second tells the
 /// user which of their three credentials to go fix.
 fn token_source_line(ctx: &RequestCtx) -> Option<String> {
     Some(match ctx.token_source.as_ref()? {
@@ -445,16 +444,16 @@ fn credential_relevant(kind: &ErrorKind) -> bool {
     )
 }
 
-/// The `fcli api …` command equivalent to the request that failed. Runnable, and useful in its
+/// The `fjo api …` command equivalent to the request that failed. Runnable, and useful in its
 /// own right: layer 1 always works even when a generated model or a porcelain command does not.
 fn api_command(ctx: &RequestCtx) -> String {
     let Some(path) = ctx.path.as_deref() else {
-        return "fcli auth status".to_owned();
+        return "fjo auth status".to_owned();
     };
     let rel = path.split_once("/api/v1/").map_or(path, |(_, r)| r).trim_start_matches('/');
     match ctx.method.as_deref() {
-        Some("GET") | None => format!("fcli api {rel}"),
-        Some(m) => format!("fcli api -X {m} {rel}"),
+        Some("GET") | None => format!("fjo api {rel}"),
+        Some(m) => format!("fjo api -X {m} {rel}"),
     }
 }
 
@@ -490,7 +489,7 @@ fn join_scopes(v: &[String]) -> String {
 /// saying we do not know.
 fn scopes_or_unknown(v: &[String]) -> String {
     if v.is_empty() {
-        "the scope for this route (fcli could not determine it)".to_owned()
+        "the scope for this route (fjo could not determine it)".to_owned()
     } else {
         join_scopes(v)
     }
@@ -518,18 +517,18 @@ fn fields_facts(mut a: Advice, fields: &[FieldError]) -> Advice {
 fn list_command(kind: &str, slug: Option<&str>) -> String {
     let scope = slug.map(|s| format!(" -R {s}")).unwrap_or_default();
     match kind {
-        "pull request" => format!("fcli pr list --state all{scope}"),
-        "issue" => format!("fcli issue list --state all{scope}"),
-        "release" => format!("fcli release list{scope}"),
-        "label" => format!("fcli label list{scope}"),
-        "milestone" => format!("fcli milestone list{scope}"),
-        "workflow run" => format!("fcli run list{scope}"),
-        "team" => "fcli team list".to_owned(),
-        "user" => "fcli api users/search --jq '.data[].login'".to_owned(),
-        "organization" => "fcli org list".to_owned(),
+        "pull request" => format!("fjo pr list --state all{scope}"),
+        "issue" => format!("fjo issue list --state all{scope}"),
+        "release" => format!("fjo release list{scope}"),
+        "label" => format!("fjo label list{scope}"),
+        "milestone" => format!("fjo milestone list{scope}"),
+        "workflow run" => format!("fjo run list{scope}"),
+        "team" => "fjo team list".to_owned(),
+        "user" => "fjo api users/search --jq '.data[].login'".to_owned(),
+        "organization" => "fjo org list".to_owned(),
         _ => match slug {
-            Some(s) => format!("fcli api repos/{s}"),
-            None => "fcli auth status".to_owned(),
+            Some(s) => format!("fjo api repos/{s}"),
+            None => "fjo auth status".to_owned(),
         },
     }
 }
@@ -544,7 +543,7 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
             .fact("host", host)
             .todo(Line::text("check the hostname and your DNS connection."))
             .todo(Line::text("1. check the hostname and port"))
-            .todo(Line::step(2, "fcli auth status").and_text("  (configured hosts)"))
+            .todo(Line::step(2, "fjo auth status").and_text("  (configured hosts)"))
             .todo(
                 Line::text(
                     "3. if the instance is only reachable on a private network, connect to it \
@@ -564,10 +563,10 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
                 // The port answered — it just answered in HTTP. Telling the reader to check the
                 // port here would send them to change the one thing that is already correct.
                 a.todo(Line::text(
-                    "the server replied with HTTP, but fcli used HTTPS.",
+                    "the server replied with HTTP, but fjo used HTTPS.",
                 ))
                 .todo(Line::text("1. use an explicit HTTP address:").hang(3))
-                .todo(Line::text("   ").and_cmd(format!("fcli auth login --host http://{with_port}")))
+                .todo(Line::text("   ").and_cmd(format!("fjo auth login --host http://{with_port}")))
                 .todo(Line::text("2. check the server response:").hang(3))
                 .todo(Line::text("   ").and_cmd(format!(
                     "curl -sS -o /dev/null -w '%{{http_code}}\\n' http://{with_port}/api/v1/version"
@@ -585,9 +584,9 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
                 // scheme entirely — and a bare host makes `scheme_for` guess https for anything
                 // non-loopback, so taking the advice moved the reader from this branch into the
                 // plaintext one above.
-                // Step 1 curls the address fcli actually used, port and all, rather than a
+                // Step 1 curls the address fjo actually used, port and all, rather than a
                 // guessed default. It answers the question the reader has — "is it really
-                // refused, or is this fcli?" — with an independent tool, and a definitive
+                // refused, or is this fjo?" — with an independent tool, and a definitive
                 // answer about the right address beats a hint about a different one.
                 .todo(Line::text("1. test the same address with curl:").hang(3))
                 .todo(Line::text("   ").and_cmd(format!(
@@ -599,7 +598,7 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
                 )
                 .todo(
                     Line::text("   ")
-                        .and_cmd(format!("fcli auth login --host {scheme}://{host}:3000")),
+                        .and_cmd(format!("fjo auth login --host {scheme}://{host}:3000")),
                 )
                 .todo(Line::note("check whether a firewall or VPN is blocking the connection."))
             }
@@ -614,7 +613,7 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
                 .todo(Line::text("1. add the CA certificate to the system trust store, then retry"))
                 .todo(
                     Line::text("2. or set the CA file for one command: ")
-                        .and_cmd("SSL_CERT_FILE=/path/to/ca.pem fcli auth status")
+                        .and_cmd("SSL_CERT_FILE=/path/to/ca.pem fjo auth status")
                         .hang(3),
                 )
                 .todo(Line::note(
@@ -649,7 +648,7 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
             )
             .fact("waited", if after.is_zero() { String::new() } else { format!("{:.1?}", after) })
             .todo(Line::text("the request timed out during the phase shown above."))
-            .todo(Line::step(1, "fcli api version").and_text("  (check server availability)"))
+            .todo(Line::step(1, "fjo api version").and_text("  (check server availability)"))
             .todo(
                 Line::text(
                     "2. check the server status before retrying a long-running operation",
@@ -668,14 +667,14 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
             .todo(Line::step(1, "env | grep -i proxy").and_text("  (proxy settings)"))
             .todo(
                 Line::text("2. exclude this host from the proxy: ")
-                    .and_cmd(format!("NO_PROXY={} fcli auth status", ctx.host.as_deref().unwrap_or("git.example.org")))
+                    .and_cmd(format!("NO_PROXY={} fjo auth status", ctx.host.as_deref().unwrap_or("git.example.org")))
                     .hang(3),
             ),
 
         // -------------------------------------------------------------- config and auth
         NoHostConfigured => a
             .todo(Line::text("log in to your Forgejo server:"))
-            .todo(Line::step(1, "fcli auth login --host git.example.org"))
+            .todo(Line::step(1, "fjo auth login --host git.example.org"))
             .todo(Line::note(
                 "use the server address without /api/v1.",
             )),
@@ -683,8 +682,8 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
         UnknownHost { given, known } => a
             .fact("asked for", given)
             .fact("configured", if known.is_empty() { "(none)".to_owned() } else { known.join(", ") })
-            .todo(Line::step(1, format!("fcli auth login --host {given}")).and_text("  (add it)"))
-            .todo(Line::step(2, "fcli auth status").and_text("  (list configured hosts)"))
+            .todo(Line::step(1, format!("fjo auth login --host {given}")).and_text("  (add it)"))
+            .todo(Line::step(2, "fjo auth status").and_text("  (list configured hosts)"))
             .todo(Line::note(
                 "git.example.org and www.git.example.org are separate hosts.",
             )),
@@ -697,9 +696,9 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
                     .and_url(settings_hint(ctx))
                     .hang(3),
             )
-            .todo(Line::step(2, format!("fcli auth login --host {host}")))
+            .todo(Line::step(2, format!("fjo auth login --host {host}")))
             .todo(Line::note(
-                "in CI, set FCLI_TOKEN or FORGEJO_TOKEN instead of logging in.",
+                "in CI, set FJO_TOKEN or FORGEJO_TOKEN instead of logging in.",
             )),
 
         TokenRejected { host, login, settings_url } => a
@@ -713,7 +712,7 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
                     .and_url(settings_url.clone())
                     .hang(3),
             )
-            .todo(Line::step(2, format!("fcli auth login --host {host}")))
+            .todo(Line::step(2, format!("fjo auth login --host {host}")))
             .todo(Line::note(
                 "replacing a token requires creating a new one.",
             )),
@@ -740,7 +739,7 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
                 .hang(3),
             )
             .todo(Line::text("   ").and_url(settings_url.clone()))
-            .todo(Line::step(2, format!("fcli auth login --host {host}")))
+            .todo(Line::step(2, format!("fjo auth login --host {host}")))
             .todo(Line::note(
                 "Forgejo scopes use read:<area> and write:<area>.",
             )),
@@ -750,8 +749,8 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
             .todo(Line::text(
                 "password authentication requires a two-factor code for this account.",
             ))
-            .todo(Line::step(1, "fcli --otp 123456 <command>").and_text("  (the current code)"))
-            .todo(Line::step(2, format!("fcli auth login --host {host}")).and_text("  (store a token instead)"))
+            .todo(Line::step(1, "fjo --otp 123456 <command>").and_text("  (the current code)"))
+            .todo(Line::step(2, format!("fjo auth login --host {host}")).and_text("  (store a token instead)"))
             .todo(Line::note("API tokens do not require a two-factor code.")),
 
         KeyringUnavailable { cause } => a
@@ -771,13 +770,13 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
                 "unlock or enable the keyring, or use one of these alternatives:",
             ))
             .todo(
-                Line::step(1, "fcli auth login --host git.example.org --insecure-storage")
+                Line::step(1, "fjo auth login --host git.example.org --insecure-storage")
                     .and_text("  (a 0600 file)")
                     .hang(3),
             )
-            .todo(Line::step(2, "FCLI_TOKEN=<token> fcli auth status").and_text("  (environment only)"))
+            .todo(Line::step(2, "FJO_TOKEN=<token> fjo auth status").and_text("  (environment only)"))
             .todo(Line::note(
-                "set FCLI_CREDENTIAL_STORE to env, file, or keyring to select a storage backend.",
+                "set FJO_CREDENTIAL_STORE to env, file, or keyring to select a storage backend.",
             )),
 
         CredFilePermissions { path, mode } => a
@@ -785,21 +784,21 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
             .fact("mode", format!("{mode:04o}"))
             .todo(Line::text("restrict the token file to your account:"))
             .todo(Line::step(1, format!("chmod 600 {}", path.display())))
-            .todo(Line::note("fcli will not read the file until its permissions are restricted.")),
+            .todo(Line::note("fjo will not read the file until its permissions are restricted.")),
 
         // ------------------------------------------------------------------ git context
         NotAGitRepo => a
             .todo(Line::text(
                 "specify a repository or run the command from a Git checkout.",
             ))
-            .todo(Line::step(1, "fcli <command> -R owner/name").and_text("  (name it explicitly)"))
+            .todo(Line::step(1, "fjo <command> -R owner/name").and_text("  (name it explicitly)"))
             .todo(Line::text("2. or cd into a clone and try again"))
-            .todo(Line::note("FCLI_REPO=owner/name works too, for a shell session or a CI job.")),
+            .todo(Line::note("FJO_REPO=owner/name works too, for a shell session or a CI job.")),
 
         RepoNotResolved { tried } => attempts(a, tried)
             .todo(Line::text("specify a repository or save a default for this checkout."))
-            .todo(Line::step(1, "fcli <command> -R owner/name"))
-            .todo(Line::step(2, "fcli repo set-default").and_text("  (remember it for this checkout)"))
+            .todo(Line::step(1, "fjo <command> -R owner/name"))
+            .todo(Line::step(2, "fjo repo set-default").and_text("  (remember it for this checkout)"))
             .todo(Line::note("-R also accepts host/owner/name and a full URL.")),
 
         AmbiguousRemote { candidates } => {
@@ -811,24 +810,24 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
             a.todo(Line::text(
                 "choose which remote repository to use.",
             ))
-            .todo(Line::step(1, "fcli repo set-default").and_text("  (save the choice in Git config)"))
-            .todo(Line::step(2, "fcli <command> -R owner/name").and_text("  (choose for one command)"))
+            .todo(Line::step(1, "fjo repo set-default").and_text("  (save the choice in Git config)"))
+            .todo(Line::step(2, "fjo <command> -R owner/name").and_text("  (choose for one command)"))
         }
 
         RemoteHostUnknown { remote, host } => a
             .fact("remote", remote)
             .fact("host", host)
             .todo(Line::text("log in to the remote host, or select another repository."))
-            .todo(Line::step(1, format!("fcli auth login --host {host}")))
-            .todo(Line::step(2, "fcli repo set-default").and_text("  (select a repository explicitly)"))
+            .todo(Line::step(1, format!("fjo auth login --host {host}")))
+            .todo(Line::step(2, "fjo repo set-default").and_text("  (select a repository explicitly)"))
             .todo(Line::note(
-                "SSH Host aliases are not supported. Use fcli repo set-default instead.",
+                "SSH Host aliases are not supported. Use fjo repo set-default instead.",
             )),
 
         // --------------------------------------------------------------- API semantics
         // The probe was never run, so the one thing this rendering must not do is list the three
         // causes of a missing repository as though the repository had been ruled out. The
-        // remedy is the check itself: `fcli api repos/{slug}` is literally the request
+        // remedy is the check itself: `fjo api repos/{slug}` is literally the request
         // `probe_404` would have made, and running it collapses the ambiguity the same way.
         RepoNotFound { slug, host, login, probed: false, server_message } => a
             .fact("repository", format!("{slug}  (not checked)"))
@@ -838,9 +837,9 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
             .todo(Line::text(
                 "the repository check was disabled or failed. The repository or a referenced resource may be missing.",
             ))
-            .todo(Line::step(1, format!("fcli api repos/{slug}")).and_text("  (check repository access)"))
+            .todo(Line::step(1, format!("fjo api repos/{slug}")).and_text("  (check repository access)"))
             .todo(Line::text("2. another 404 may mean the repository is missing, private with a token").hang(3))
-            .todo(Line::text("   that lacks read:repository, or on another server. Check: ").and_cmd("fcli auth status"))
+            .todo(Line::text("   that lacks read:repository, or on another server. Check: ").and_cmd("fjo auth status"))
             .todo(Line::text("3. if it succeeds, check the resources referenced by the request:").hang(3))
             .todo(Line::text("   branch, tag, or user names")),
 
@@ -861,8 +860,8 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
             .todo(Line::text("2. for a private repository, check account access and read:repository.").hang(3))
             .todo(Line::text("   if the scope is missing, create a new token at"))
             .todo(Line::text("   ").and_url(settings_hint(ctx)))
-            .todo(Line::text("3. check the configured server: ").and_cmd("fcli auth status").hang(3))
-            .todo(Line::text("check repository access: ").and_cmd(format!("fcli api repos/{slug}"))),
+            .todo(Line::text("3. check the configured server: ").and_cmd("fjo auth status").hang(3))
+            .todo(Line::text("check repository access: ").and_cmd(format!("fjo api repos/{slug}"))),
 
         // The collection case: the path ended on `…/pulls`, with no identifier after it. See
         // `headline` above — and note that neither remedy below is the other's with a word
@@ -894,13 +893,13 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
             };
             match slug {
                 Some(s) => a
-                    .todo(Line::step(2, format!("fcli api repos/{s}/branches --jq '.[].name'")))
-                    .todo(Line::step(3, format!("fcli api repos/{s}/tags --jq '.[].name'")))
+                    .todo(Line::step(2, format!("fjo api repos/{s}/branches --jq '.[].name'")))
+                    .todo(Line::step(3, format!("fjo api repos/{s}/tags --jq '.[].name'")))
                     .todo(Line::note(
                         "when creating a pull request, check --head and --base.",
                     )),
                 None => a.todo(
-                    Line::step(2, "fcli auth status")
+                    Line::step(2, "fjo auth status")
                         .and_text("  (check the selected server)"),
                 ),
             }
@@ -937,7 +936,7 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
             .todo(Line::text(
                 "the server does not support this endpoint or HTTP method.",
             ))
-            .todo(Line::step(1, "fcli api settings/api").and_text("  (server API settings)"))
+            .todo(Line::step(1, "fjo api settings/api").and_text("  (server API settings)"))
             .todo(Line::text("2. try the web interface at ").and_url(web_base(ctx)).hang(3))
             .todo(Line::note(
                 "check whether the server version supports this operation.",
@@ -959,7 +958,7 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
             };
             a.todo(Line::text("correct the rejected values listed above."))
                 .todo(Line::text("1. correct the values and retry"))
-                .todo(Line::step(2, "fcli raw search issue").and_text("  (find the endpoint and its flags)"))
+                .todo(Line::step(2, "fjo raw search issue").and_text("  (find the endpoint and its flags)"))
                 .todo(Line::note(
                     "the server may require a field that the API specification marks optional.",
                 ))
@@ -971,7 +970,7 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
             .todo(Line::text(
                 "check storage usage, including LFS objects, packages, and release assets.",
             ))
-            .todo(Line::step(1, "fcli quota").and_text("  (what is using the space)"))
+            .todo(Line::step(1, "fjo quota").and_text("  (what is using the space)"))
             .todo(
                 Line::text(
                     "2. delete old release assets or package versions, or ask an admin to raise \
@@ -990,7 +989,7 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
                     .hang(3),
             )
             .todo(Line::text("2. then run the command again"))
-            .todo(Line::text("reads still work: ").and_cmd(format!("fcli issue list -R {slug}"))),
+            .todo(Line::text("reads still work: ").and_cmd(format!("fjo issue list -R {slug}"))),
 
         // Forgejo answers a refused operation with 405 as readily as with 409, so the status is
         // not the signal here — the message is, and it is the whole point of the variant.
@@ -1024,10 +1023,10 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
             a.todo(Line::text(
                 "wait for the pending checks to finish.",
             ))
-            .todo(Line::step(1, format!("fcli pr checks {pr}{scope}")).and_text("  (run it again in a minute)"))
+            .todo(Line::step(1, format!("fjo pr checks {pr}{scope}")).and_text("  (run it again in a minute)"))
             .todo(
                 Line::text("2. or enable automatic merge: ")
-                    .and_cmd(format!("fcli pr merge {pr}{scope} --auto"))
+                    .and_cmd(format!("fjo pr merge {pr}{scope} --auto"))
                     .hang(3),
             )
             .todo(Line::note(
@@ -1036,8 +1035,8 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
         }
 
         // No invented remedy. The checks table printed directly above already names the check
-        // that failed, and fcli does not know why it failed — a status check is a name, a state
-        // and a URL. So the advice is the URL, and the reason there is no `fcli run view` here.
+        // that failed, and fjo does not know why it failed — a status check is a name, a state
+        // and a URL. So the advice is the URL, and the reason there is no `fjo run view` here.
         ChecksFailed { slug, pr, failed } => {
             let scope = slug.as_deref().map(|s| format!(" -R {s}")).unwrap_or_default();
             let mut a = a.fact("pull request", pr).fact("repository", slug.clone().unwrap_or_default());
@@ -1068,11 +1067,11 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
                 )
             };
             a.todo(
-                Line::step(2, format!("fcli pr checks {pr}{scope} --web"))
+                Line::step(2, format!("fjo pr checks {pr}{scope} --web"))
                     .and_text("  (the same checks in a browser)"),
             )
             .todo(Line::note(
-                "checks may come from external services. For Forgejo Actions, use fcli run list.",
+                "checks may come from external services. For Forgejo Actions, use fjo run list.",
             ))
         }
 
@@ -1091,15 +1090,15 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
                 "inspect the workflow logs to find the cause.",
             ))
             .todo(
-                Line::step(1, format!("fcli run view {run}{scope} --log-failed"))
+                Line::step(1, format!("fjo run view {run}{scope} --log-failed"))
                     .and_text("  (only the steps that failed)"),
             )
             .todo(
-                Line::step(2, format!("fcli run logs {run}{scope}"))
+                Line::step(2, format!("fjo run logs {run}{scope}"))
                     .and_text("  (full logs)"),
             )
             .todo(Line::note(
-                "cancelled or timed-out runs may not have started. Check runner availability with fcli run runners.",
+                "cancelled or timed-out runs may not have started. Check runner availability with fjo run runners.",
             ))
         }
 
@@ -1153,7 +1152,7 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
             .todo(Line::text(
                 "the server denied this action. Check the message and your account permissions.",
             ))
-            .todo(Line::step(1, "fcli api user --jq .login").and_text("  (confirm who you are)"))
+            .todo(Line::step(1, "fjo api user --jq .login").and_text("  (confirm who you are)"))
             .todo(
                 Line::text("2. ask for the access you need, or, as an instance admin, act as")
                     .hang(3),
@@ -1164,7 +1163,7 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
             .fact("status", status.to_string())
             .fact("server says", quoted(server_message))
             .todo(Line::text("the server returned an error. Check its availability and logs."))
-            .todo(Line::step(1, "fcli api version").and_text("  (is the instance up?)"))
+            .todo(Line::step(1, "fjo api version").and_text("  (is the instance up?)"))
             .todo(
                 Line::text(
                     "2. if the error persists, ask the server administrator to check the logs",
@@ -1197,15 +1196,15 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
             .todo(Line::note("a write may have succeeded before response decoding failed. Check before retrying.")),
 
         // No `problem` fact: the message is already the headline, and repeating it verbatim two
-        // lines later reads like a bug. And no "that is not a shape fcli accepts" either — it is
+        // lines later reads like a bug. And no "that is not a shape fjo accepts" either — it is
         // not always true. `Usage` also carries "not implemented yet" and "this flag is not
         // supported by this build", where that sentence is simply wrong.
         //
         // The consequence is that a `Usage` message must be self-sufficient: it is the entire
         // explanation the user gets, so write it as advice rather than as a complaint.
         Usage(_) => a
-            .todo(Line::step(1, "fcli --help"))
-            .todo(Line::step(2, "fcli raw search <words>").and_text("  (find the operation you want)")),
+            .todo(Line::step(1, "fjo --help"))
+            .todo(Line::step(2, "fjo raw search <words>").and_text("  (find the operation you want)")),
 
         UnknownJsonField { given, available, suggest } => {
             let a = a.fact("asked for", given).fact("did you mean", suggest.clone().unwrap_or_default());
@@ -1215,8 +1214,8 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
                 a.fact("available", available.join(", "))
             };
             a.todo(Line::text("use --json for top-level fields and --jq for nested fields."))
-                .todo(Line::step(1, "fcli pr list --json").and_text("  (list available fields)"))
-                .todo(Line::step(2, "fcli pr list --jq '.[].head.ref'").and_text("  (select a nested field)"))
+                .todo(Line::step(1, "fjo pr list --json").and_text("  (list available fields)"))
+                .todo(Line::step(2, "fjo pr list --jq '.[].head.ref'").and_text("  (select a nested field)"))
         }
 
         JqCompile { expr, message, col } => {
@@ -1229,7 +1228,7 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
             a.fact("message", message)
                 .todo(Line::text("correct the jq expression using the error above."))
                 .todo(
-                    Line::step(1, "fcli api repos/OWNER/REPO/pulls > /tmp/p.json")
+                    Line::step(1, "fjo api repos/OWNER/REPO/pulls > /tmp/p.json")
                         .and_text("  then iterate with jq locally")
                         .hang(3),
                 )
@@ -1245,7 +1244,7 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
             ))
             .todo(Line::text("1. try this template:").hang(3))
             .todo(Line::text("   ").and_cmd(
-                "fcli pr list --template '{{range .}}{{tablerow .number .title}}{{end}}{{tablerender}}'",
+                "fjo pr list --template '{{range .}}{{tablerow .number .title}}{{end}}{{tablerender}}'",
             ))
             .todo(Line::note("tablerender prints buffered rows; remaining rows are printed automatically at the end.")),
 
@@ -1289,7 +1288,7 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
                 )
                 .hang(3),
             )
-            .todo(Line::note("fcli auth setup-git makes git use the same credential fcli does."))
+            .todo(Line::note("fjo auth setup-git makes git use the same credential fjo does."))
         }
 
         // git worked; the *server* declined. Which is why the remedy is not git advice, and why
@@ -1307,7 +1306,7 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
                     .todo(Line::text(
                         "amended or rebased commits require a force push to update the AGit pull request.",
                     ))
-                    .todo(Line::step(1, "fcli pr create --agit --force-push"))
+                    .todo(Line::step(1, "fjo pr create --agit --force-push"))
                     .todo(Line::note(
                         "keep the same topic to update this pull request; a new topic creates another.",
                     )),
@@ -1321,7 +1320,7 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
                             .hang(3),
                     )
                     .todo(
-                        Line::step(2, "fcli pr create --head <branch>")
+                        Line::step(2, "fjo pr create --head <branch>")
                             .and_text("  (create from a branch instead)"),
                     ),
 
@@ -1329,7 +1328,7 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
                     .todo(Line::text(
                         "AGit requires a topic. Reuse it when updating the same pull request.",
                     ))
-                    .todo(Line::step(1, "fcli pr create --agit --topic <name>"))
+                    .todo(Line::step(1, "fjo pr create --agit --topic <name>"))
                     .todo(Line::note(
                         "--topic defaults to the current branch name.",
                     )),
@@ -1339,7 +1338,7 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
                         "check the server response above for the reason.",
                     ))
                     .todo(
-                        Line::step(1, "fcli pr create --head <branch>")
+                        Line::step(1, "fjo pr create --head <branch>")
                             .and_text("  (if you can push a branch)"),
                     )
                     .todo(Line::note(
@@ -1372,10 +1371,10 @@ mod tests {
             host: Some("git.example.org".into()),
             login: Some("perf3ct".into()),
             method: Some("POST".into()),
-            path: Some("/api/v1/repos/perf3ct/fcli/issues".into()),
-            repo: Some("perf3ct/fcli".into()),
+            path: Some("/api/v1/repos/perf3ct/fjo/issues".into()),
+            repo: Some("perf3ct/fjo".into()),
             status: Some(403),
-            token_source: Some(TokenSource::Keyring { entry: "fcli:git.example.org".into() }),
+            token_source: Some(TokenSource::Keyring { entry: "fjo:git.example.org".into() }),
         }
     }
 
@@ -1512,14 +1511,14 @@ mod tests {
             KeyringUnavailable { cause: KeyringCause::NoBackend },
             KeyringUnavailable { cause: KeyringCause::Timeout },
             CredFilePermissions {
-                path: PathBuf::from("/home/u/.config/fcli/hosts.toml"),
+                path: PathBuf::from("/home/u/.config/fjo/hosts.toml"),
                 mode: 0o644,
             },
             NotAGitRepo,
             RepoNotResolved {
                 tried: vec![
                     Attempt::new("-R/--repo", "not given"),
-                    Attempt::new("FCLI_REPO", "not set"),
+                    Attempt::new("FJO_REPO", "not set"),
                     Attempt::new("git remotes", "none configured"),
                 ],
             },
@@ -1528,18 +1527,18 @@ mod tests {
                     RemoteCandidate {
                         remote: "fork".into(),
                         host: "git.example.org".into(),
-                        slug: "me/fcli".into(),
+                        slug: "me/fjo".into(),
                     },
                     RemoteCandidate {
                         remote: "mirror".into(),
                         host: "codeberg.org".into(),
-                        slug: "perf3ct/fcli".into(),
+                        slug: "perf3ct/fjo".into(),
                     },
                 ],
             },
             RemoteHostUnknown { remote: "origin".into(), host: "work-forge".into() },
             RepoNotFound {
-                slug: "perf3ct/fcli".into(),
+                slug: "perf3ct/fjo".into(),
                 host: "git.example.org".into(),
                 login: Some("perf3ct".into()),
                 probed: true,
@@ -1549,7 +1548,7 @@ mod tests {
             // on `ResourceNotFound`. It must still reach the user — and the headline must not
             // announce a repository nobody looked for.
             RepoNotFound {
-                slug: "perf3ct/fcli".into(),
+                slug: "perf3ct/fjo".into(),
                 host: "git.example.org".into(),
                 login: Some("perf3ct".into()),
                 probed: false,
@@ -1560,7 +1559,7 @@ mod tests {
             // The same unchecked case with a silent server: the remedy is still the check that
             // was skipped, not a list of causes for a repository nobody ruled out.
             RepoNotFound {
-                slug: "perf3ct/fcli".into(),
+                slug: "perf3ct/fjo".into(),
                 host: "git.example.org".into(),
                 login: Some("perf3ct".into()),
                 probed: false,
@@ -1569,14 +1568,14 @@ mod tests {
             ResourceNotFound {
                 kind: "pull request",
                 id: "4212".into(),
-                slug: Some("perf3ct/fcli".into()),
+                slug: Some("perf3ct/fjo".into()),
                 server_message: None,
             },
             // The collection: no identifier in the path, and the server said why.
             ResourceNotFound {
                 kind: "pull request",
                 id: String::new(),
-                slug: Some("perf3ct/fcli".into()),
+                slug: Some("perf3ct/fjo".into()),
                 server_message: Some(
                     "could not find 'no-such-branch' to be a commit, branch or tag".into(),
                 ),
@@ -1586,7 +1585,7 @@ mod tests {
             ResourceNotFound {
                 kind: "pull request",
                 id: String::new(),
-                slug: Some("perf3ct/fcli".into()),
+                slug: Some("perf3ct/fjo".into()),
                 server_message: None,
             },
             ResourceNotFound {
@@ -1597,7 +1596,7 @@ mod tests {
             },
             RouteNotFound {
                 method: "POST".into(),
-                path: "/api/v1/repos/perf3ct/fcli/actions/runs/12/rerun".into(),
+                path: "/api/v1/repos/perf3ct/fjo/actions/runs/12/rerun".into(),
                 instance: Some("forgejo 7.0.0".into()),
             },
             Conflict {
@@ -1617,9 +1616,9 @@ mod tests {
             },
             QuotaExceeded {
                 server_message: "quota exceeded for size:assets".into(),
-                uploading: Some("fcli-v1.2.3-linux.tar.gz".into()),
+                uploading: Some("fjo-v1.2.3-linux.tar.gz".into()),
             },
-            Archived { slug: "perf3ct/fcli".into(), host: "git.example.org".into() },
+            Archived { slug: "perf3ct/fjo".into(), host: "git.example.org".into() },
             StateConflict {
                 resource: Some("pull request 4212".into()),
                 state: None,
@@ -1633,13 +1632,13 @@ mod tests {
                 server_message: String::new(),
             },
             ChecksPending {
-                slug: Some("perf3ct/fcli".into()),
+                slug: Some("perf3ct/fjo".into()),
                 pr: "4212".into(),
                 pending: vec!["build / test (pull_request)".into()],
             },
             ChecksPending { slug: None, pr: "4212".into(), pending: vec![] },
             ChecksFailed {
-                slug: Some("perf3ct/fcli".into()),
+                slug: Some("perf3ct/fjo".into()),
                 pr: "4212".into(),
                 failed: vec![FailedCheck::new(
                     "build / test (pull_request)",
@@ -1654,11 +1653,11 @@ mod tests {
             },
             ChecksFailed { slug: None, pr: "4212".into(), failed: vec![] },
             RunFailed {
-                slug: Some("perf3ct/fcli".into()),
+                slug: Some("perf3ct/fjo".into()),
                 run: "918".into(),
                 conclusion: "failure".into(),
                 failed_jobs: vec!["test (ubuntu-latest)".into()],
-                url: Some("https://git.example.org/perf3ct/fcli/actions/runs/918".into()),
+                url: Some("https://git.example.org/perf3ct/fjo/actions/runs/918".into()),
             },
             RunFailed {
                 slug: None,
@@ -1693,12 +1692,12 @@ mod tests {
             },
             Template { message: "unknown helper \"tablerowx\"".into(), line: 3 },
             PathNotFound {
-                path: PathBuf::from("dist/fcli-v1.2.3-linux.tar.gz"),
+                path: PathBuf::from("dist/fjo-v1.2.3-linux.tar.gz"),
                 what: "release asset",
             },
             GitFailed {
                 command: "git push origin HEAD:refs/for/main/my-topic".into(),
-                stderr: "remote: Permission to perf3ct/fcli.git denied.\nfatal: unable to access 'https://git.example.org/perf3ct/fcli.git/': The requested URL returned error: 403"
+                stderr: "remote: Permission to perf3ct/fjo.git denied.\nfatal: unable to access 'https://git.example.org/perf3ct/fjo.git/': The requested URL returned error: 403"
                     .into(),
                 status: Some(128),
             },
@@ -1829,7 +1828,7 @@ mod tests {
             ctx: Box::new(ctx()),
         };
         let text = render(&err, Color::Never);
-        assert!(text.contains("the OS keyring, entry fcli:git.example.org"));
+        assert!(text.contains("the OS keyring, entry fjo:git.example.org"));
         assert!(!text.contains("token abc"), "{text}");
     }
 
@@ -1895,11 +1894,11 @@ mod tests {
     fn snapshot_repo_not_found_is_honestly_ambiguous() {
         let mut c = ctx();
         c.method = Some("GET".into());
-        c.path = Some("/api/v1/repos/perf3ct/fcli/pulls/4212".into());
+        c.path = Some("/api/v1/repos/perf3ct/fjo/pulls/4212".into());
         c.status = Some(404);
         insta::assert_snapshot!(snap(
             ErrorKind::RepoNotFound {
-                slug: "perf3ct/fcli".into(),
+                slug: "perf3ct/fjo".into(),
                 host: "git.example.org".into(),
                 login: Some("perf3ct".into()),
                 probed: true,
@@ -1916,11 +1915,11 @@ mod tests {
     fn snapshot_repo_not_checked_does_not_claim_the_repository_is_missing() {
         let mut c = ctx();
         c.method = Some("GET".into());
-        c.path = Some("/api/v1/repos/perf3ct/fcli/pulls/4212".into());
+        c.path = Some("/api/v1/repos/perf3ct/fjo/pulls/4212".into());
         c.status = Some(404);
         insta::assert_snapshot!(snap(
             ErrorKind::RepoNotFound {
-                slug: "perf3ct/fcli".into(),
+                slug: "perf3ct/fjo".into(),
                 host: "git.example.org".into(),
                 login: Some("perf3ct".into()),
                 probed: false,
@@ -1935,7 +1934,7 @@ mod tests {
     #[test]
     fn an_unchecked_404_does_not_announce_a_missing_repository() {
         let kind = ErrorKind::RepoNotFound {
-            slug: "perf3ct/fcli".into(),
+            slug: "perf3ct/fjo".into(),
             host: "git.example.org".into(),
             login: Some("perf3ct".into()),
             probed: false,
@@ -1945,25 +1944,25 @@ mod tests {
         };
         let h = headline(&kind);
         assert!(!h.contains("could not find the repository"), "{h}");
-        assert!(h.contains("perf3ct/fcli"), "the slug is still named: {h}");
+        assert!(h.contains("perf3ct/fjo"), "the slug is still named: {h}");
 
         let text = render(&Error { kind: Box::new(kind), ctx: Box::new(ctx()) }, Color::Never);
         assert!(text.contains("(not checked)"), "{text}");
         // The remedy is the request the probe would have made, spelled out and runnable.
-        assert!(text.contains("fcli api repos/perf3ct/fcli"), "{text}");
+        assert!(text.contains("fjo api repos/perf3ct/fjo"), "{text}");
     }
 
     #[test]
     fn snapshot_resource_not_found_is_definite() {
         let mut c = ctx();
         c.method = Some("GET".into());
-        c.path = Some("/api/v1/repos/perf3ct/fcli/pulls/4212".into());
+        c.path = Some("/api/v1/repos/perf3ct/fjo/pulls/4212".into());
         c.status = Some(404);
         insta::assert_snapshot!(snap(
             ErrorKind::ResourceNotFound {
                 kind: "pull request",
                 id: "4212".into(),
-                slug: Some("perf3ct/fcli".into()),
+                slug: Some("perf3ct/fjo".into()),
                 server_message: None,
             },
             c
@@ -1977,13 +1976,13 @@ mod tests {
     fn snapshot_resource_not_found_on_a_collection_blames_no_identifier() {
         let mut c = ctx();
         c.method = Some("POST".into());
-        c.path = Some("/api/v1/repos/perf3ct/fcli/pulls".into());
+        c.path = Some("/api/v1/repos/perf3ct/fjo/pulls".into());
         c.status = Some(404);
         insta::assert_snapshot!(snap(
             ErrorKind::ResourceNotFound {
                 kind: "pull request",
                 id: String::new(),
-                slug: Some("perf3ct/fcli".into()),
+                slug: Some("perf3ct/fjo".into()),
                 server_message: Some(
                     "could not find 'no-such-branch' to be a commit, branch or tag".into(),
                 ),
@@ -1998,13 +1997,13 @@ mod tests {
     fn snapshot_resource_not_found_on_a_collection_without_a_message() {
         let mut c = ctx();
         c.method = Some("POST".into());
-        c.path = Some("/api/v1/repos/perf3ct/fcli/pulls".into());
+        c.path = Some("/api/v1/repos/perf3ct/fjo/pulls".into());
         c.status = Some(404);
         insta::assert_snapshot!(snap(
             ErrorKind::ResourceNotFound {
                 kind: "pull request",
                 id: String::new(),
-                slug: Some("perf3ct/fcli".into()),
+                slug: Some("perf3ct/fjo".into()),
                 server_message: None,
             },
             c
@@ -2013,17 +2012,17 @@ mod tests {
 
     /// With the disambiguation probe disabled, the *same* body arrives on `RepoNotFound`. The
     /// server's own sentence has to survive the trip — and it is exactly this pairing that made
-    /// the old collapsed wording indefensible: "could not find the repository perf3ct/fcli" sat
+    /// the old collapsed wording indefensible: "could not find the repository perf3ct/fjo" sat
     /// one line above a server message about a branch, having checked nothing.
     #[test]
     fn snapshot_repo_not_found_keeps_the_server_message_too() {
         let mut c = ctx();
         c.method = Some("POST".into());
-        c.path = Some("/api/v1/repos/perf3ct/fcli/pulls".into());
+        c.path = Some("/api/v1/repos/perf3ct/fjo/pulls".into());
         c.status = Some(404);
         insta::assert_snapshot!(snap(
             ErrorKind::RepoNotFound {
-                slug: "perf3ct/fcli".into(),
+                slug: "perf3ct/fjo".into(),
                 host: "git.example.org".into(),
                 login: Some("perf3ct".into()),
                 probed: false,
@@ -2038,12 +2037,12 @@ mod tests {
     #[test]
     fn snapshot_route_not_found() {
         let mut c = ctx();
-        c.path = Some("/api/v1/repos/perf3ct/fcli/actions/runs/12/rerun".into());
+        c.path = Some("/api/v1/repos/perf3ct/fjo/actions/runs/12/rerun".into());
         c.status = Some(404);
         insta::assert_snapshot!(snap(
             ErrorKind::RouteNotFound {
                 method: "POST".into(),
-                path: "/api/v1/repos/perf3ct/fcli/actions/runs/12/rerun".into(),
+                path: "/api/v1/repos/perf3ct/fjo/actions/runs/12/rerun".into(),
                 instance: Some("forgejo 7.0.0".into()),
             },
             c
@@ -2054,7 +2053,7 @@ mod tests {
     fn snapshot_conflict_keeps_the_server_message() {
         let mut c = ctx();
         c.method = Some("POST".into());
-        c.path = Some("/api/v1/repos/perf3ct/fcli/pulls/12/merge".into());
+        c.path = Some("/api/v1/repos/perf3ct/fjo/pulls/12/merge".into());
         c.status = Some(409);
         insta::assert_snapshot!(snap(
             ErrorKind::Conflict {
@@ -2087,12 +2086,12 @@ mod tests {
     #[test]
     fn snapshot_quota_exceeded() {
         let mut c = ctx();
-        c.path = Some("/api/v1/repos/perf3ct/fcli/releases/12/assets".into());
+        c.path = Some("/api/v1/repos/perf3ct/fjo/releases/12/assets".into());
         c.status = Some(413);
         insta::assert_snapshot!(snap(
             ErrorKind::QuotaExceeded {
                 server_message: "quota exceeded for size:assets".into(),
-                uploading: Some("fcli-v1.2.3-linux.tar.gz".into()),
+                uploading: Some("fjo-v1.2.3-linux.tar.gz".into()),
             },
             c
         ));
@@ -2103,7 +2102,7 @@ mod tests {
         let mut c = ctx();
         c.status = Some(423);
         insta::assert_snapshot!(snap(
-            ErrorKind::Archived { slug: "perf3ct/fcli".into(), host: "git.example.org".into() },
+            ErrorKind::Archived { slug: "perf3ct/fjo".into(), host: "git.example.org".into() },
             c
         ));
     }
@@ -2112,7 +2111,7 @@ mod tests {
     fn snapshot_state_conflict_from_a_405() {
         let mut c = ctx();
         c.method = Some("POST".into());
-        c.path = Some("/api/v1/repos/perf3ct/fcli/pulls/4212/merge".into());
+        c.path = Some("/api/v1/repos/perf3ct/fjo/pulls/4212/merge".into());
         c.status = Some(405);
         insta::assert_snapshot!(snap(
             ErrorKind::StateConflict {
@@ -2142,11 +2141,11 @@ mod tests {
     fn snapshot_checks_pending() {
         let mut c = ctx();
         c.method = Some("GET".into());
-        c.path = Some("/api/v1/repos/perf3ct/fcli/commits/abc123/status".into());
+        c.path = Some("/api/v1/repos/perf3ct/fjo/commits/abc123/status".into());
         c.status = Some(200);
         insta::assert_snapshot!(snap(
             ErrorKind::ChecksPending {
-                slug: Some("perf3ct/fcli".into()),
+                slug: Some("perf3ct/fjo".into()),
                 pr: "4212".into(),
                 pending: vec!["build / test (pull_request)".into(), "lint".into()],
             },
@@ -2160,11 +2159,11 @@ mod tests {
     fn snapshot_checks_failed() {
         let mut c = ctx();
         c.method = Some("GET".into());
-        c.path = Some("/api/v1/repos/perf3ct/fcli/commits/abc123/status".into());
+        c.path = Some("/api/v1/repos/perf3ct/fjo/commits/abc123/status".into());
         c.status = Some(200);
         insta::assert_snapshot!(snap(
             ErrorKind::ChecksFailed {
-                slug: Some("perf3ct/fcli".into()),
+                slug: Some("perf3ct/fjo".into()),
                 pr: "4212".into(),
                 failed: vec![
                     FailedCheck::new(
@@ -2226,15 +2225,15 @@ mod tests {
     fn snapshot_run_failed() {
         let mut c = ctx();
         c.method = Some("GET".into());
-        c.path = Some("/api/v1/repos/perf3ct/fcli/actions/runs/918".into());
+        c.path = Some("/api/v1/repos/perf3ct/fjo/actions/runs/918".into());
         c.status = Some(200);
         insta::assert_snapshot!(snap(
             ErrorKind::RunFailed {
-                slug: Some("perf3ct/fcli".into()),
+                slug: Some("perf3ct/fjo".into()),
                 run: "918".into(),
                 conclusion: "failure".into(),
                 failed_jobs: vec!["test (ubuntu-latest)".into()],
-                url: Some("https://git.example.org/perf3ct/fcli/actions/runs/918".into()),
+                url: Some("https://git.example.org/perf3ct/fjo/actions/runs/918".into()),
             },
             c
         ));
@@ -2246,7 +2245,7 @@ mod tests {
     fn snapshot_path_not_found_is_local() {
         insta::assert_snapshot!(snap(
             ErrorKind::PathNotFound {
-                path: PathBuf::from("dist/fcli-v1.2.3-linux.tar.gz"),
+                path: PathBuf::from("dist/fjo-v1.2.3-linux.tar.gz"),
                 what: "release asset",
             },
             RequestCtx::default()
@@ -2259,7 +2258,7 @@ mod tests {
         insta::assert_snapshot!(snap(
             ErrorKind::GitFailed {
                 command: "git push origin HEAD:refs/for/main/my-topic".into(),
-                stderr: "remote: Permission to perf3ct/fcli.git denied.\nfatal: unable to access 'https://git.example.org/perf3ct/fcli.git/': The requested URL returned error: 403"
+                stderr: "remote: Permission to perf3ct/fjo.git denied.\nfatal: unable to access 'https://git.example.org/perf3ct/fjo.git/': The requested URL returned error: 403"
                     .into(),
                 status: Some(128),
             },
@@ -2273,7 +2272,7 @@ mod tests {
     fn snapshot_pagination_did_not_terminate() {
         let mut c = ctx();
         c.method = Some("GET".into());
-        c.path = Some("/api/v1/repos/perf3ct/fcli/issues".into());
+        c.path = Some("/api/v1/repos/perf3ct/fjo/issues".into());
         c.status = Some(200);
         insta::assert_snapshot!(snap(
             ErrorKind::PaginationDidNotTerminate { pages: 10_000, items: 500_000 },
@@ -2297,7 +2296,7 @@ mod tests {
             RequestCtx {
                 host: Some("172.17.0.1".into()),
                 method: Some("GET".into()),
-                path: Some("/api/v1/repos/fclitest/agit".into()),
+                path: Some("/api/v1/repos/fjotest/agit".into()),
                 ..Default::default()
             },
         ));
@@ -2413,7 +2412,7 @@ mod tests {
     fn snapshot_decode_names_the_pointer() {
         let mut c = ctx();
         c.method = Some("GET".into());
-        c.path = Some("/api/v1/repos/perf3ct/fcli/pulls".into());
+        c.path = Some("/api/v1/repos/perf3ct/fjo/pulls".into());
         c.status = Some(200);
         insta::assert_snapshot!(snap(
             ErrorKind::Decode {
@@ -2508,12 +2507,12 @@ mod tests {
                     RemoteCandidate {
                         remote: "fork".into(),
                         host: "git.example.org".into(),
-                        slug: "me/fcli".into(),
+                        slug: "me/fjo".into(),
                     },
                     RemoteCandidate {
                         remote: "mirror".into(),
                         host: "codeberg.org".into(),
-                        slug: "perf3ct/fcli".into(),
+                        slug: "perf3ct/fjo".into(),
                     },
                 ],
             },
@@ -2527,8 +2526,8 @@ mod tests {
             ErrorKind::RepoNotResolved {
                 tried: vec![
                     Attempt::new("-R/--repo", "not given"),
-                    Attempt::new("FCLI_REPO / FORGEJO_REPO", "not set"),
-                    Attempt::new("git config remote.*.fcli-resolved", "no value"),
+                    Attempt::new("FJO_REPO / FORGEJO_REPO", "not set"),
+                    Attempt::new("git config remote.*.fjo-resolved", "no value"),
                     Attempt::new("remote name scoring", "no remote matched a configured host"),
                 ],
             },

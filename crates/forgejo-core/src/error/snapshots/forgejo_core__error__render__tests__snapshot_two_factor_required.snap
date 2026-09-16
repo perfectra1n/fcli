@@ -4,12 +4,12 @@ expression: "snap(ErrorKind::TwoFactorRequired { host: \"git.example.org\".into(
 ---
 error: git.example.org requires a two-factor code
 
-  request:    POST /api/v1/repos/perf3ct/fcli/issues
+  request:    POST /api/v1/repos/perf3ct/fjo/issues
   host:       git.example.org
-  token from: the OS keyring, entry fcli:git.example.org
+  token from: the OS keyring, entry fjo:git.example.org
 
 what to do:
   password authentication requires a two-factor code for this account.
-  1. fcli --otp 123456 <command>  (the current code)
-  2. fcli auth login --host git.example.org  (store a token instead)
+  1. fjo --otp 123456 <command>  (the current code)
+  2. fjo auth login --host git.example.org  (store a token instead)
   note: API tokens do not require a two-factor code.

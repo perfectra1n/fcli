@@ -318,7 +318,7 @@ impl<'a> Lowerer<'a> {
     /// **Request wins.** The two failure modes are not symmetric: an over-optional response
     /// costs the reader an `.unwrap_or_default()`, while an under-optional request silently
     /// destroys a repository's issue-tracker configuration the first time someone runs
-    /// `fcli repo edit --description`. A membership test on this set, rather than a
+    /// `fjo repo edit --description`. A membership test on this set, rather than a
     /// request-minus-response difference, is what encodes that precedence.
     fn find_request_models(&self) -> BTreeSet<String> {
         let mut stack: Vec<String> = Vec::new();
@@ -1108,7 +1108,7 @@ mod vendored {
     /// The request-body `Presence` policy, against the real spec.
     ///
     /// The bug this pins: with the response policy applied to a request model,
-    /// `fcli issue edit 42 --title x` serializes `"body":""` and Forgejo erases the issue body.
+    /// `fjo issue edit 42 --title x` serializes `"body":""` and Forgejo erases the issue body.
     #[test]
     fn no_request_body_model_has_a_default_plain_field() {
         let ir = ir();
@@ -1270,7 +1270,7 @@ mod vendored {
 
     #[test]
     fn path_like_encoding_applies_to_filepath_and_ref_and_nothing_else() {
-        // Get this wrong and `fcli raw repo get-contents o r src/main.rs` 404s with no hint
+        // Get this wrong and `fjo raw repo get-contents o r src/main.rs` 404s with no hint
         // why, because `src/main.rs` went out as `src%2Fmain.rs`. Get it wrong the other way
         // and an owner literally named `a/b` escapes into the path.
         let mut path_like = BTreeSet::new();

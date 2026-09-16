@@ -8,17 +8,17 @@
 //!
 //! See the module docs on `forgejo_client::meta_types`. The short version: clap's derive path
 //! builds the *entire* command tree inside `Parser::parse()`, so 506 `Args` structs would cost
-//! thousands of `Arg` allocations on every invocation including `fcli --version`. These tables
-//! are plain data — they land in `.rodata` and cost nothing until `fcli-raw` reads the one
+//! thousands of `Arg` allocations on every invocation including `fjo --version`. These tables
+//! are plain data — they land in `.rodata` and cost nothing until `fjo-raw` reads the one
 //! subtree the user named.
 //!
-//! # The two invariants `fcli-raw` cannot function without
+//! # The two invariants `fjo-raw` cannot function without
 //!
 //! 1. **`OPS` is sorted by `(group, command)`.** `lookup::op` binary-searches it. An unsorted
 //!    table does not error; it silently fails to find roughly half the commands.
 //! 2. **`GroupMeta::{first, len}` is a correct, contiguous slice of `OPS`.** `lookup::ops_in`
 //!    hands that slice straight to the clap builder, so a wrong index puts another group's
-//!    operations under `fcli raw repo`.
+//!    operations under `fjo raw repo`.
 //!
 //! Both are asserted by the generated `meta/invariants.rs` test module against the committed
 //! table, not merely arranged for here — the assertion is worth more than the arrangement,
@@ -55,7 +55,7 @@ pub fn emit(ir: &Ir) -> Result<Vec<GeneratedFile>> {
 
     // `lower` sorts operations by `(group, command)`, which is exactly the order `OPS` needs.
     // Re-check rather than trust: if lowering ever stops sorting, every binary search in
-    // `fcli-raw` starts missing commands, and nothing else in the build would notice.
+    // `fjo-raw` starts missing commands, and nothing else in the build would notice.
     for w in ir.operations.windows(2) {
         let (a, b) = (&w[0], &w[1]);
         if (a.group.as_str(), a.command.as_str()) >= (b.group.as_str(), b.command.as_str()) {
@@ -447,7 +447,7 @@ fn param(p: &Param, location: TokenStream, enums: &EnumTable) -> Result<TokenStr
         // `meta_types::CtxFill` has no `Branch`. Five `repo` operations take a `branch` path
         // parameter that the IR marks context-fillable; they stay required here rather than
         // being silently filled from the checkout. Reported upstream of this file — changing
-        // `meta_types` is not this emitter's call while `fcli-raw` is being written against it.
+        // `meta_types` is not this emitter's call while `fjo-raw` is being written against it.
         Some(CtxFill::Branch) | None => quote! { None },
     };
     let vals = values(enums, p.enum_values.as_ref(), &p.ty);
@@ -541,7 +541,7 @@ fn mod_file(ir: &Ir, a: &Assignment) -> Result<TokenStream> {
     Ok(quote! {
         #![doc = " Generated layer-2 command metadata: the whole API as `&'static` data."]
         #![doc = ""]
-        #![doc = " `OPS` is the table `fcli raw` dispatches from. Two properties of it are"]
+        #![doc = " `OPS` is the table `fjo raw` dispatches from. Two properties of it are"]
         #![doc = " load-bearing and asserted by this module's `invariants` tests:"]
         #![doc = ""]
         #![doc = " 1. It is sorted by `(group, command)`, which is what makes `lookup::op` a"]
@@ -682,7 +682,7 @@ fn invariants_file() -> TokenStream {
                 assert_eq!(
                     found.map(|o| o.op_id),
                     Some(op.op_id),
-                    "lookup::op could not find `fcli raw {} {}`",
+                    "lookup::op could not find `fjo raw {} {}`",
                     op.group,
                     op.command
                 );
@@ -700,7 +700,7 @@ fn invariants_file() -> TokenStream {
             }
         }
 
-        /// A wrong `first`/`len` puts another group's operations under `fcli raw <group>`, with
+        /// A wrong `first`/`len` puts another group's operations under `fjo raw <group>`, with
         /// no error anywhere — the clap tree is simply built from the wrong slice.
         #[test]
         fn group_indices_slice_ops_exactly_and_cover_all_of_it() {

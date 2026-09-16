@@ -4,9 +4,9 @@ members = [
     "crates/forgejo-core",
     "crates/forgejo-model",
     "crates/forgejo-client",
-    "crates/fcli-raw",
-    "crates/fcli",
-    "crates/fcli-itest",
+    "crates/fjo-raw",
+    "crates/fjo",
+    "crates/fjo-itest",
     "crates/xtask",
 ]
 
@@ -14,7 +14,7 @@ members = [
 edition = "2024"
 rust-version = "1.95"
 license = "AGPL-3.0-only"
-repository = "https://github.com/perfectra1n/fcli"
+repository = "https://github.com/perfectra1n/fjo"
 authors = ["perf3ct"]
 
 [workspace.dependencies]
@@ -22,7 +22,7 @@ authors = ["perf3ct"]
 forgejo-core = { version = "0.1.0", path = "crates/forgejo-core" }
 forgejo-model = { version = "0.1.0", path = "crates/forgejo-model" }
 forgejo-client = { version = "0.1.0", path = "crates/forgejo-client" }
-fcli-raw = { version = "0.1.0", path = "crates/fcli-raw" }
+fjo-raw = { version = "0.1.0", path = "crates/fjo-raw" }
 
 # --- serde / data ---
 serde = { version = "1", features = ["derive"] }
@@ -57,7 +57,7 @@ terminal_size = "0.4"
 unicode-width = "0.2"
 indicatif = "0.18"
 # `fuzzy` is off because it pulls in `fuzzy-matcher`, unreleased since 2020 and banned in
-# deny.toml. We do our own ranking in `fcli raw search` anyway, so inquire's fuzzy filter
+# deny.toml. We do our own ranking in `fjo raw search` anyway, so inquire's fuzzy filter
 # would be a second, worse matcher for no benefit.
 inquire = { version = "0.9", default-features = false, features = [
     "macros", "crossterm", "one-liners", "editor",
@@ -95,7 +95,7 @@ sha2 = "0.10"
 
 # --- dev / test ---
 # Pinned exactly: the itest harness depends on how `get_host()` resolves the daemon address
-# (see crates/fcli-itest/src/lib.rs), which is behaviour, not API, and a minor bump could
+# (see crates/fjo-itest/src/lib.rs), which is behaviour, not API, and a minor bump could
 # change it without changing the signature. `blocking` provides the synchronous `Container`
 # the harness uses; the `http_wait` feature is deliberately off — our own probe loop reports
 # *why* a health check failed, which `HttpWaitStrategy` does not.
@@ -120,7 +120,7 @@ debug = false
 #   panic = "abort"    -2,127,744   (vs "unwind"; there is no catch_unwind in the tree)
 #
 # `opt-level = "z"` was measured too and rejected: it reaches 10,774,104 bytes, another
-# 1.4 MB, but costs ~29% on the heaviest CPU-bound path (`fcli completion bash`, which
+# 1.4 MB, but costs ~29% on the heaviest CPU-bound path (`fjo completion bash`, which
 # builds the whole command tree) against ~8% for "s". "s" already clears the 15 MB budget
 # with 2.8 MB of headroom, so the extra megabyte is not worth a quarter of the throughput.
 #

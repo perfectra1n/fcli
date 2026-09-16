@@ -1,8 +1,8 @@
 # Porcelain conventions
 
-Layer 3 is the hand-written, `gh`-shaped surface. Layer 2 (`fcli raw`) already reaches every
+Layer 3 is the hand-written, `gh`-shaped surface. Layer 2 (`fjo raw`) already reaches every
 endpoint, so layer 3 exists **only** to be nicer than layer 2 for things people do daily. A
-porcelain command that is merely a renamed `fcli raw` call is not worth its maintenance.
+porcelain command that is merely a renamed `fjo raw` call is not worth its maintenance.
 
 These rules exist so that commands written by different people at different times feel like one
 tool. Where a rule seems arbitrary, it is usually copying `gh` deliberately, because transferable
@@ -19,24 +19,24 @@ At least one of:
 - **Interactive fallback** — prompts when a required value is missing and stdin is a terminal.
 - **Human rendering** — a table or detail view materially better than pretty-printed JSON.
 
-If a command does none of these, leave it to `fcli raw` and say so in the group's `--help`.
+If a command does none of these, leave it to `fjo raw` and say so in the group's `--help`.
 
 ## Naming
 
 - **Verbs match `gh`**: `list`, `view`, `create`, `edit`, `close`, `reopen`, `delete`, `comment`,
   `checkout`, `merge`, `diff`, `status`. Not `get`/`update`/`remove`.
-- **Groups are singular**: `fcli pr`, `fcli issue`, `fcli label` — never `prs`, `issues`.
+- **Groups are singular**: `fjo pr`, `fjo issue`, `fjo label` — never `prs`, `issues`.
 - `list` is plural in output but singular in the command name. `gh` does this; consistency beats
   grammar.
-- Forgejo-only groups still follow the same verbs: `fcli times list`, `fcli wiki view`.
+- Forgejo-only groups still follow the same verbs: `fjo times list`, `fjo wiki view`.
 - **A verb must describe what the API does, not what its route is called.** Where the two differ,
-  the route is the one that is wrong for a user. `fcli git-hook disable` exists rather than
+  the route is the one that is wrong for a user. `fjo git-hook disable` exists rather than
   `delete` because `DELETE /repos/{o}/{r}/hooks/git/{id}` only empties the hook's script — the
   hook is one of a fixed set and survives. Copying the route's name there would be a silent lie
   about what just happened to a production repository.
 - The built-in `tea` aliases are `pull` → `pr`, `labels` → `label`, `ms` → `milestone`,
   `login` → `auth login`, `whoami` → `auth status`. They are **hidden**: they work, and they
-  appear in no `--help`, no completion script, and no `fcli alias list`. `gh`'s names are still
+  appear in no `--help`, no completion script, and no `fjo alias list`. `gh`'s names are still
   the only names the tool advertises. They live in **one table**, `cmd::alias::BUILTIN`, applied
   by the same argv rewrite that expands user aliases — not scattered across the groups as clap
   aliases, which could not express the two that expand to two words. A user's own alias of the
@@ -56,7 +56,7 @@ Pick a different name: `repo edit --as-template`, `repo create --from-template` 
 `quota rules create --bytes` all exist for exactly this reason, and
 [gh-differences.md](gh-differences.md) records why. Do not reach for clap's `global` suppression
 instead — it is tree-wide, so one command suppressing `--limit` deletes the global `--limit`
-everywhere else in the tool. `crates/fcli/tests/porcelain_cli.rs` walks the whole tree through
+everywhere else in the tool. `crates/fjo/tests/porcelain_cli.rs` walks the whole tree through
 clap's own consistency checks and is what catches this.
 
 ## Flags with fixed meanings
@@ -85,7 +85,7 @@ matters: replace-semantics on an edit silently discards labels someone else adde
 ## Interaction rules
 
 - **Prompt only when stdin *and* stdout are both terminals** and prompting is not disabled
-  (`FCLI_PROMPT_DISABLED`, or `prompt = "disabled"` in config).
+  (`FJO_PROMPT_DISABLED`, or `prompt = "disabled"` in config).
 - When a required value is missing and prompting is unavailable, **error naming the flag** —
   never hang, never guess.
 - Destructive actions confirm on a terminal and require `--yes` otherwise.
@@ -93,7 +93,7 @@ matters: replace-semantics on an edit silently discards labels someone else adde
 
 ## Output
 
-Every command routes through `fcli::output`. Never `println!` a result directly.
+Every command routes through `fjo::output`. Never `println!` a result directly.
 
 - Provide a human renderer using the shared `Table` (`output::table`), and pass the field table
   from `forgejo_client::fields` so `--json` works and bare `--json` can list names.
@@ -120,8 +120,8 @@ Take a resolved `RepoContext` from `Runtime`. Never call `resolve_repo` yourself
 parse a remote URL in a command — that logic lives in `forgejo_core::context` and has a
 seven-form test table behind it.
 
-Commands that genuinely work without a repository (`fcli auth`, `fcli search`, `fcli api`,
-`fcli org list`) must not trigger resolution at all, so they work outside a checkout.
+Commands that genuinely work without a repository (`fjo auth`, `fjo search`, `fjo api`,
+`fjo org list`) must not trigger resolution at all, so they work outside a checkout.
 
 ## Newtyped ids
 
@@ -135,7 +135,7 @@ Per command, at minimum:
 
 - A `FakeTransport` unit test for the request it builds — method, path, query, body.
 - An `insta` snapshot of human output, and one of `--json` output.
-- An integration test in `crates/fcli-itest` for anything with more than one API call.
+- An integration test in `crates/fjo-itest` for anything with more than one API call.
 - A test naming any bug the command's logic exists to prevent.
 
 Golden rule for test names: `merges_with_squash_when_asked`, not `test_merge_2`.

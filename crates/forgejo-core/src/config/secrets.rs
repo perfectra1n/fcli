@@ -19,7 +19,7 @@
 //! 3. **The outcome is cached per host** as `credential_store` in `hosts.toml`, so a machine
 //!    with no Secret Service pays the failed round-trip once rather than on every invocation.
 //!
-//! `FCLI_CREDENTIAL_STORE=env|file|keyring` is a hard override that skips all of the above,
+//! `FJO_CREDENTIAL_STORE=env|file|keyring` is a hard override that skips all of the above,
 //! which is what CI should set.
 //!
 //! ## The token is never logged
@@ -48,21 +48,21 @@ use crate::error::{Error, ErrorKind, KeyringCause, Result, TokenSource};
 use crate::types::Scope;
 
 /// The keyring service name. Stable forever: changing it would orphan every stored token.
-pub const KEYRING_SERVICE: &str = "fcli";
+pub const KEYRING_SERVICE: &str = "fjo";
 
 /// How long any single keyring call may take before we give up on it.
 ///
 /// Two seconds is chosen against human patience, not against D-Bus: a working Secret Service
 /// answers in single-digit milliseconds, so anything approaching this is already broken. The
-/// budget for `fcli`'s entire pre-network phase is ~20 ms, and a user staring at a hung
+/// budget for `fjo`'s entire pre-network phase is ~20 ms, and a user staring at a hung
 /// prompt will not guess that their keyring is the reason.
 pub const KEYRING_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Environment variables checked for a token, in order.
-pub const TOKEN_VARS: &[&str] = &["FCLI_TOKEN", "FORGEJO_TOKEN"];
+pub const TOKEN_VARS: &[&str] = &["FJO_TOKEN", "FORGEJO_TOKEN"];
 
 /// The variable that hard-overrides store selection.
-pub const STORE_VAR: &str = "FCLI_CREDENTIAL_STORE";
+pub const STORE_VAR: &str = "FJO_CREDENTIAL_STORE";
 
 // -------------------------------------------------------------------------- store kinds
 
@@ -76,7 +76,7 @@ pub enum CredentialStore {
     /// `hosts.toml`, mode 0600. Chosen knowingly via `--insecure-storage`, or automatically
     /// when the keyring is unavailable.
     File,
-    /// `FCLI_TOKEN` / `FORGEJO_TOKEN`. Read-only by nature.
+    /// `FJO_TOKEN` / `FORGEJO_TOKEN`. Read-only by nature.
     Env,
 }
 
@@ -216,7 +216,7 @@ where
 
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     if std::thread::Builder::new()
-        .name("fcli-keyring".to_owned())
+        .name("fjo-keyring".to_owned())
         .spawn(move || {
             // A send failure means we already timed out and nobody is listening.
             let _ = tx.send(f());
@@ -474,7 +474,7 @@ impl CredStore for FileStore {
 
 // ---------------------------------------------------------------------------- env store
 
-/// `FCLI_TOKEN`, then `FORGEJO_TOKEN`.
+/// `FJO_TOKEN`, then `FORGEJO_TOKEN`.
 ///
 /// An environment token is **not host-scoped**: it is used for whichever host the command
 /// targets. That is exactly what CI wants and exactly what surprises someone who exported a
@@ -532,7 +532,7 @@ impl CredStore for EnvStore<'_> {
 /// Chooses among the backends and degrades gracefully.
 ///
 /// Read order is **keyring → file → env**, minus any head the cache or the configured
-/// preference rules out. `FCLI_CREDENTIAL_STORE` replaces the chain with a single entry.
+/// preference rules out. `FJO_CREDENTIAL_STORE` replaces the chain with a single entry.
 pub struct Credentials<'a> {
     env: &'a dyn Env,
     keyring: Box<dyn CredStore + 'a>,
@@ -544,7 +544,7 @@ pub struct Credentials<'a> {
 }
 
 impl<'a> Credentials<'a> {
-    /// Reads `FCLI_CREDENTIAL_STORE` from `env`. An unrecognised value is ignored with a
+    /// Reads `FJO_CREDENTIAL_STORE` from `env`. An unrecognised value is ignored with a
     /// warning rather than being fatal — a typo in a CI variable should not stop the job
     /// before it can even print why.
     pub fn new(env: &'a dyn Env) -> Self {
@@ -574,7 +574,7 @@ impl<'a> Credentials<'a> {
     }
 
     /// The `config.toml` `credential_store` preference. Loses to
-    /// `FCLI_CREDENTIAL_STORE` and to `--insecure-storage`.
+    /// `FJO_CREDENTIAL_STORE` and to `--insecure-storage`.
     #[must_use]
     pub fn with_preference(mut self, pref: CredentialStore) -> Self {
         self.preference = pref;
@@ -596,7 +596,7 @@ impl<'a> Credentials<'a> {
         self
     }
 
-    /// Non-fatal problems: an unusable keyring, a bad `FCLI_CREDENTIAL_STORE`. The caller
+    /// Non-fatal problems: an unusable keyring, a bad `FJO_CREDENTIAL_STORE`. The caller
     /// prints these once, after the command's own output.
     pub fn warnings(&self) -> &[ErrorKind] {
         &self.warnings
@@ -606,7 +606,7 @@ impl<'a> Credentials<'a> {
         std::mem::take(&mut self.warnings)
     }
 
-    /// The store this host will read from first, for `fcli auth status`.
+    /// The store this host will read from first, for `fjo auth status`.
     pub fn effective_store(&self, hosts: &Hosts, host: &HostKey) -> CredentialStore {
         *self.read_order(hosts, host).first().unwrap_or(&CredentialStore::Env)
     }
@@ -677,7 +677,7 @@ impl<'a> Credentials<'a> {
     /// Finds a token for `login` on `host`.
     ///
     /// `Ok(None)` means "no token anywhere", which the caller turns into
-    /// [`ErrorKind::NotAuthenticated`] with a `fcli auth login` remedy. A keyring that
+    /// [`ErrorKind::NotAuthenticated`] with a `fjo auth login` remedy. A keyring that
     /// cannot be reached becomes a warning and the search continues; `hosts` is updated with
     /// the probe result so the next invocation skips it.
     pub fn token(
@@ -690,11 +690,11 @@ impl<'a> Credentials<'a> {
         //
         // The cache exists for one purpose: to stop us repeating a *probe that failed*, so a
         // machine with no D-Bus session does not pay a doomed keyring round trip every time.
-        // `FCLI_CREDENTIAL_STORE` and `--insecure-storage` are not probe results — they are
+        // `FJO_CREDENTIAL_STORE` and `--insecure-storage` are not probe results — they are
         // instructions about this run.
         //
         // Persisting them is actively destructive. A single
-        // `FCLI_CREDENTIAL_STORE=env fcli api user` would rewrite `credential_store = "env"`
+        // `FJO_CREDENTIAL_STORE=env fjo api user` would rewrite `credential_store = "env"`
         // into `hosts.toml`, and every later run — with that variable now unset — would consult
         // only the environment, find nothing, and report "you are not logged in" while the
         // token sat in the file one line below. Found exactly that way.
@@ -723,7 +723,7 @@ impl<'a> Credentials<'a> {
                     self.warnings.push(*e.kind);
                     // Cache the *fallback*, not the failure, so we stop paying for a D-Bus
                     // round trip that will not work. `store` re-probes, so plugging in a
-                    // desktop session and running `fcli auth login` recovers.
+                    // desktop session and running `fjo auth login` recovers.
                     //
                     // Still gated: if the user forced `keyring` for this run and it was
                     // unavailable, silently recording `file` would override the preference they
@@ -769,7 +769,7 @@ impl<'a> Credentials<'a> {
                     return Ok(source);
                 }
                 // Fall through to the file store. Losing the login entirely because the
-                // keyring is absent would make `fcli` unusable on a server.
+                // keyring is absent would make `fjo` unusable on a server.
                 Err(e) if matches!(*e.kind, ErrorKind::KeyringUnavailable { .. }) => {
                     self.warnings.push(*e.kind);
                 }
@@ -889,17 +889,17 @@ mod tests {
     }
 
     #[test]
-    fn fcli_token_beats_forgejo_token() {
+    fn fjo_token_beats_forgejo_token() {
         let (_d, hosts, key) = fixture();
-        let env = MapEnv::new().with("FCLI_TOKEN", "a").with("FORGEJO_TOKEN", "b");
+        let env = MapEnv::new().with("FJO_TOKEN", "a").with("FORGEJO_TOKEN", "b");
         let got = EnvStore::new(&env).get(&key, "perf3ct", &hosts).unwrap().unwrap();
         assert_eq!(got.expose(), "a");
-        assert_eq!(got.source(), &TokenSource::Env { var: "FCLI_TOKEN".into() });
+        assert_eq!(got.source(), &TokenSource::Env { var: "FJO_TOKEN".into() });
     }
 
     #[test]
     fn credential_store_env_is_a_hard_override() {
-        // FCLI_CREDENTIAL_STORE=env must not silently fall back to a keyring token: CI
+        // FJO_CREDENTIAL_STORE=env must not silently fall back to a keyring token: CI
         // wants a deterministic answer, including a deterministic failure.
         let (_d, mut hosts, key) = fixture();
         let env = MapEnv::new().with(STORE_VAR, "env");
@@ -914,7 +914,7 @@ mod tests {
     #[test]
     fn a_one_off_store_override_is_never_written_back() {
         // Found by running the real binary: a single
-        //   FCLI_CREDENTIAL_STORE=env fcli api user
+        //   FJO_CREDENTIAL_STORE=env fjo api user
         // persisted `credential_store = "env"` into hosts.toml. Every later run — with the
         // variable now unset — consulted only the environment, found nothing, and reported
         // "you are not logged in" while the token sat in the file one line below.
@@ -938,7 +938,7 @@ mod tests {
         assert_eq!(
             hosts.cached_store(&key),
             before,
-            "FCLI_CREDENTIAL_STORE must not change the cached store"
+            "FJO_CREDENTIAL_STORE must not change the cached store"
         );
 
         // And with the override gone, the file token is found again.

@@ -1,5 +1,0 @@
----
-source: crates/fcli/src/cmd/release.rs
-expression: text(&buf)
----
-{"tag_name":"v1.0.0","draft":false,"prerelease":false}

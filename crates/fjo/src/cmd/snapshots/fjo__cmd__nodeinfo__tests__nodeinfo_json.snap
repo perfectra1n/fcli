@@ -1,0 +1,5 @@
+---
+source: crates/fjo/src/cmd/nodeinfo.rs
+expression: "testing::as_json(NODE_FIELDS, \"software,openRegistrations,protocols,version\",\nporcelain::json_of(&info()).unwrap())"
+---
+{"software":{"homepage":"https://forgejo.org/","name":"forgejo","repository":"https://codeberg.org/forgejo/forgejo","version":"16.0.4"},"openRegistrations":false,"protocols":["activitypub"],"version":"2.1"}

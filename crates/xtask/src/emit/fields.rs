@@ -2,7 +2,7 @@
 //!
 //! Output is [`forgejo_client::fields`](../../../forgejo-client/src/generated/fields/mod.rs):
 //! one `FIELDS_<MODEL>: &[FieldSpec]` per model that can come back from an operation, plus
-//! `OP_FIELDS`, a sorted `op_id → fields` index that `fcli` binary-searches to answer bare
+//! `OP_FIELDS`, a sorted `op_id → fields` index that `fjo` binary-searches to answer bare
 //! `--json` without auth and without a network round trip.
 //!
 //! # Wire names, verbatim
@@ -11,7 +11,7 @@
 //! anywhere in this project — `docs/output.md` argues it at length, and the short version is
 //! that `gh`'s rule is "field names are the API's field names", which for a snake_case REST API
 //! yields snake_case. Copying `gh`'s camelCase *output* would break `--jq` portability between
-//! `fcli api` and `fcli pr list` and would need a bijective mapping that `html_url` does not
+//! `fjo api` and `fjo pr list` and would need a bijective mapping that `html_url` does not
 //! have.
 //!
 //! # `Vec<T>` resolves to `T`'s fields
@@ -536,7 +536,7 @@ fn invariants_file(cx: &Context<'_>) -> TokenStream {
             }
         }
 
-        /// `fcli` binary-searches `OP_FIELDS`. Unsorted, bare `--json` reports "no such
+        /// `fjo` binary-searches `OP_FIELDS`. Unsorted, bare `--json` reports "no such
         /// operation" for roughly half the API while the operation itself works fine.
         #[test]
         fn op_fields_is_sorted_by_op_id() {
@@ -680,7 +680,7 @@ mod tests {
     #[test]
     fn responses_with_nothing_to_select_get_no_entry() {
         // A 204, a plain-text body and a byte stream have no fields; an empty table would be a
-        // lie, and `fcli` reports "this command has no --json fields" from the absence.
+        // lie, and `fjo` reports "this command has no --json fields" from the absence.
         let cx = Context::build(ir()).unwrap();
         assert!(!cx.op_models.contains_key("issueDelete"));
         assert!(!cx.op_models.contains_key("repoGetRawFile"));

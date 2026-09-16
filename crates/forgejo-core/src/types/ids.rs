@@ -68,7 +68,7 @@ macro_rules! int_id {
         impl FromStr for $name {
             type Err = ParseIdError;
 
-            /// Accepts a leading `#`, so `fcli issue view '#42'` works as users expect.
+            /// Accepts a leading `#`, so `fjo issue view '#42'` works as users expect.
             fn from_str(s: &str) -> Result<Self, Self::Err> {
                 let t = s.trim().trim_start_matches('#');
                 t.parse::<i64>()

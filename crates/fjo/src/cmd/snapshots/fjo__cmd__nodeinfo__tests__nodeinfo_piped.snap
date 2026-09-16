@@ -1,0 +1,5 @@
+---
+source: crates/fjo/src/cmd/nodeinfo.rs
+expression: "render_overview(&Term::piped(), \"git.example.org\", &info(), Some(&settings()))"
+---
+forgejo	16.0.4	closed	50

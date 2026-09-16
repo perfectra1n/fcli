@@ -1,0 +1,22 @@
+---
+source: crates/fjo/src/cmd/quota/mod.rs
+expression: out
+---
+Quota for you on localhost:3000
+
+used
+  repositories (public)   0 B
+  repositories (private)  0 B
+  Git LFS                 0 B
+  packages                0 B
+  release attachments     0 B
+  issue attachments       0 B
+  Actions artifacts       0 B
+  total                   0 B
+
+  Quotas include Git data, LFS objects, packages, and release assets.
+  Each rule applies to the storage categories listed under SUBJECT.
+
+No quota rules apply to you.
+This account has no applicable limits, or quotas are disabled.
+Quotas default to off: [quota] ENABLED = false in app.ini.

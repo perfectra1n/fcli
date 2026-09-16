@@ -1,8 +1,0 @@
----
-source: crates/fcli/src/cmd/quota/mod.rs
-expression: "render_groups(&testing::term(), &info.groups)"
----
-Showing 1 groups
-
-NAME     RULES  LIMITS
-default  3      1.0 GiB on size:all; 0 B on size:git:lfs; unlimited on size:assets:artifacts

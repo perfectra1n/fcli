@@ -48,7 +48,7 @@ pub enum Auth {
     /// A Forgejo API token. Sent as `Authorization: token <t>`.
     Token(SecretString),
     /// HTTP Basic. Forgejo accepts it, and it is the only way to use a password + TOTP to
-    /// *create* a token in the first place, which `fcli auth login` needs.
+    /// *create* a token in the first place, which `fjo auth login` needs.
     Basic { user: String, pass: SecretString },
 }
 

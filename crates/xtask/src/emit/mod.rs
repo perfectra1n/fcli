@@ -252,7 +252,7 @@ pub fn write_all(root: &Path, files: &[GeneratedFile], mode: Mode) -> Result<Rep
     // formatted *contents* are read back.
     static STAGE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let stage = STAGE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let staging = std::env::temp_dir().join(format!("fcli-codegen-{}-{stage}", std::process::id()));
+    let staging = std::env::temp_dir().join(format!("fjo-codegen-{}-{stage}", std::process::id()));
     let _ = std::fs::remove_dir_all(&staging);
     for f in files {
         let abs = staging.join(&f.path);
@@ -378,7 +378,7 @@ mod tests {
     /// `--config-path`, so a root without one would exercise a path that never happens in
     /// practice — and would fail for a reason unrelated to what each test is checking.
     fn temp_root(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("fcli-emit-{tag}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("fjo-emit-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::copy(crate::workspace_root().join("rustfmt.toml"), dir.join("rustfmt.toml"))

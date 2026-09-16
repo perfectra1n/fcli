@@ -1,8 +1,0 @@
----
-source: crates/fcli/src/cmd/block.rs
-expression: "seen.join(\"\\n\")"
----
-PUT /api/v1/user/block/mallory
-PUT /api/v1/user/unblock/mallory
-PUT /api/v1/orgs/acme/block/mallory
-PUT /api/v1/orgs/acme/unblock/mallory

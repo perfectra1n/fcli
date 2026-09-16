@@ -1169,7 +1169,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
-name = "fcli"
+name = "ferroid"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee93edf3c501f0035bbeffeccfed0b79e14c311f12195ec0e661e114a0f60da4"
+dependencies = [
+ "portable-atomic",
+ "rand",
+ "web-time",
+]
+
+[[package]]
+name = "find-msvc-tools"
+version = "0.1.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e0f1c7c3a72c66fd80abe965175f7523475c0489a87d3ff9d6e8c87d87a9d2d"
+
+[[package]]
+name = "fjo"
 version = "0.1.0"
 dependencies = [
  "anstream",
@@ -1179,7 +1196,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "clap_mangen",
- "fcli-raw",
+ "fjo-raw",
  "forgejo-client",
  "forgejo-core",
  "forgejo-model",
@@ -1203,7 +1220,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fcli-itest"
+name = "fjo-itest"
 version = "0.1.0"
 dependencies = [
  "assert_cmd",
@@ -1219,7 +1236,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "fcli-raw"
+name = "fjo-raw"
 version = "0.1.0"
 dependencies = [
  "clap",
@@ -1228,23 +1245,6 @@ dependencies = [
  "insta",
  "serde_json",
 ]
-
-[[package]]
-name = "ferroid"
-version = "2.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ee93edf3c501f0035bbeffeccfed0b79e14c311f12195ec0e661e114a0f60da4"
-dependencies = [
- "portable-atomic",
- "rand",
- "web-time",
-]
-
-[[package]]
-name = "find-msvc-tools"
-version = "0.1.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e0f1c7c3a72c66fd80abe965175f7523475c0489a87d3ff9d6e8c87d87a9d2d"
 
 [[package]]
 name = "flate2"

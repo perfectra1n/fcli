@@ -1,0 +1,5 @@
+---
+source: crates/fjo/src/cmd/quota/mod.rs
+expression: "testing::as_json(INFO_FIELDS, \"groups,used\",\nporcelain::json_of(&quota()).unwrap())"
+---
+{"groups":[{"name":"default","rules":[{"limit":1073741824,"name":"small","subjects":["size:all"]},{"limit":0,"name":"no-lfs","subjects":["size:git:lfs"]},{"limit":-1,"name":"exempt","subjects":["size:assets:artifacts"]}]}],"used":{"size":{"assets":{"artifacts":1048576,"attachments":{"issues":2048,"releases":4096},"packages":{"all":209715200}},"git":{"LFS":104857600},"repos":{"private":0,"public":524288000}}}}

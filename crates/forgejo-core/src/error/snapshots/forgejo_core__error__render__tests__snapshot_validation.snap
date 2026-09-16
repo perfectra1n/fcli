@@ -4,13 +4,13 @@ expression: "snap(ErrorKind::Validation\n{\n    fields:\n    vec![FieldError\n  
 ---
 error: the server rejected the values in this request (HTTP 422)
 
-  request:   POST /api/v1/repos/perf3ct/fcli/issues
+  request:   POST /api/v1/repos/perf3ct/fjo/issues
   title:     can't be blank
   assignees: user does not exist [name: nope]
 
 what to do:
   correct the rejected values listed above.
   1. correct the values and retry
-  2. fcli raw search issue  (find the endpoint and its flags)
+  2. fjo raw search issue  (find the endpoint and its flags)
   note: the server may require a field that the API specification marks
         optional.

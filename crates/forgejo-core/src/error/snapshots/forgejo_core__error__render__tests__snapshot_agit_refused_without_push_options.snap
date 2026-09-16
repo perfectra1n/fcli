@@ -10,4 +10,4 @@ error: the AGit push to HEAD:refs/for/main/fix-parser was refused
 what to do:
   AGit requires Git push options, which this server has disabled.
   1. ask the server administrator to enable Git push options
-  2. fcli pr create --head <branch>  (create from a branch instead)
+  2. fjo pr create --head <branch>  (create from a branch instead)

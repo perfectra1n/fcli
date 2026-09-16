@@ -4,15 +4,15 @@ expression: "snap(ErrorKind::InsufficientScope\n{\n    host: \"git.example.org\"
 ---
 error: token is missing a required scope (HTTP 403)
 
-  request:    POST /api/v1/repos/perf3ct/fcli/issues
+  request:    POST /api/v1/repos/perf3ct/fjo/issues
   needs:      write:issue
   token has:  unknown (Forgejo does not report a token's scopes)
-  token from: the OS keyring, entry fcli:git.example.org
+  token from: the OS keyring, entry fjo:git.example.org
 
 what to do:
   create a token with the required scopes; existing token scopes cannot be
   changed.
   1. create a token with write:issue at
      https://git.example.org/user/settings/applications
-  2. fcli auth login --host git.example.org
+  2. fjo auth login --host git.example.org
   note: Forgejo scopes use read:<area> and write:<area>.

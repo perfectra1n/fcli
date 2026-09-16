@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Source-scanning primitives for the fcli ratchets (`mise run panic-check` etc.).
+"""Source-scanning primitives for the fjo ratchets (`mise run panic-check` etc.).
 
-This is the fcli analogue of kopiur's `crates/xtask/src/scan.rs`, and it makes the
+This is the fjo analogue of kopiur's `crates/xtask/src/scan.rs`, and it makes the
 same trade deliberately: it reads the workspace's `.rs` files as *text* and never
 parses Rust. A parser is a dependency, a build-time cost, and a new way for a gate
 to fail on valid source. Text scanning can only ever be conservative, which is the
@@ -33,7 +33,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CRATES = os.path.join(ROOT, "crates")
 
-# Crates that are test infrastructure rather than shipping code. `fcli-itest` is
+# Crates that are test infrastructure rather than shipping code. `fjo-itest` is
 # `publish = false` and its `src/lib.rs` is, by its own doc comment, "Harness for
 # tests that run against a real Forgejo": it boots a container, bootstraps a
 # token and tears it down. An unwrap there fails a test loudly, which is the
@@ -41,7 +41,7 @@ CRATES = os.path.join(ROOT, "crates")
 # named here rather than silently skipped so the carve-out is reviewable; only
 # the panic check honours it (see `check_panic`), because the other two checks
 # ask questions that are still meaningful about a harness.
-TEST_CRATES = ("fcli-itest",)
+TEST_CRATES = ("fjo-itest",)
 
 
 # --- scrubbing -------------------------------------------------------------
@@ -252,7 +252,7 @@ def check_panic():
 
 def check_exit():
     """Count `std::process::exit` calls outside the one place that owns them."""
-    owner = os.path.join(CRATES, "fcli", "src", "main.rs")
+    owner = os.path.join(CRATES, "fjo", "src", "main.rs")
     hits = []
     for path in sources():
         if os.path.abspath(path) == owner:
@@ -266,7 +266,7 @@ def check_exit():
 
 def check_support():
     """Count files outside cmd/admin/ that import the admin group's support module."""
-    admin = os.path.join(CRATES, "fcli", "src", "cmd", "admin") + os.sep
+    admin = os.path.join(CRATES, "fjo", "src", "cmd", "admin") + os.sep
     hits = []
     for path in sources(skip_tests_dirs=False):
         if os.path.abspath(path).startswith(admin):
@@ -293,7 +293,7 @@ def check_support():
 # `Some(x.unwrap_or_default())` hands the model the exact zero value the
 # `Option` existed to omit, and the overwrite comes straight back.
 #
-# The live symptom was `fcli repo fork` answering `500 name is empty`, because
+# The live symptom was `fjo repo fork` answering `500 name is empty`, because
 # the call site turned "no --fork-name" into `Some("")`. No test caught it and
 # no test could have: `FakeTransport` accepts any body, so only an assertion on
 # the SHAPE of the request -- `sent.get("name").is_none()` -- would fail, and

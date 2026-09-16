@@ -35,10 +35,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Tag matches crates/fcli/Cargo.toml
+      - name: Tag matches crates/fjo/Cargo.toml
         run: |
           set -euo pipefail
-          manifest="$(grep -m1 '^version' crates/fcli/Cargo.toml | cut -d'"' -f2)"
+          manifest="$(grep -m1 '^version' crates/fjo/Cargo.toml | cut -d'"' -f2)"
           tag="${GITHUB_REF_NAME#v}"
           echo "manifest=$manifest tag=$tag"
           if [ "$manifest" != "$tag" ]; then
@@ -64,8 +64,8 @@ jobs:
           set -euo pipefail
           mkdir -p dist/completions
           for shell in bash zsh fish powershell elvish; do
-            cargo run --locked -q -p fcli -- completion "$shell" \
-              > "dist/completions/fcli.$shell"
+            cargo run --locked -q -p fjo -- completion "$shell" \
+              > "dist/completions/fjo.$shell"
           done
           ls -la dist/completions
       - uses: actions/upload-artifact@v4
@@ -119,7 +119,7 @@ jobs:
 
       - name: Build
         shell: bash
-        run: cargo build --release --locked -p fcli --target ${{ matrix.target }}
+        run: cargo build --release --locked -p fjo --target ${{ matrix.target }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -132,12 +132,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          stage="fcli-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          stage="fjo-${GITHUB_REF_NAME}-${{ matrix.target }}"
           mkdir -p "$stage"
           if [ "${{ matrix.archive }}" = "zip" ]; then
-            cp "target/${{ matrix.target }}/release/fcli.exe" "$stage/"
+            cp "target/${{ matrix.target }}/release/fjo.exe" "$stage/"
           else
-            cp "target/${{ matrix.target }}/release/fcli" "$stage/"
+            cp "target/${{ matrix.target }}/release/fjo" "$stage/"
           fi
           cp README.md LICENSE "$stage/"
           cp -r completions "$stage/completions"
