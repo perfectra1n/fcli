@@ -7,7 +7,7 @@
 # Kept in lockstep with rust-toolchain.toml, which stays the source of truth for
 # anyone running bare `cargo` without mise. Bump both together — a mismatch is
 # silent, because rustup honours the toolchain file and mise honours this one.
-rust = { version = "1.95.0", components = "rustfmt,clippy" }
+rust = { version = "1.98.1", components = "rustfmt,clippy" }
 # deny.toml is checked in and `mise run deny` is a CI gate; pin the checker so a
 # new advisory-db schema or lint default cannot turn CI red on an unrelated PR.
 "aqua:EmbarkStudios/cargo-deny" = "0.20.2"
@@ -102,6 +102,22 @@ run = "cargo doc --no-deps --locked -p forgejo-core -p forgejo-model -p forgejo-
 [tasks.codegen]
 description = "Regenerate the committed generated trees from the vendored Swagger spec"
 run = "cargo xtask codegen"
+
+[tasks.update-spec]
+description = "Vendor the Forgejo Swagger spec at a release tag into spec/ (args: --version vX.Y.Z)"
+run = "cargo xtask update-spec"
+
+[tasks.spec-diff]
+description = "Markdown report of how an upstream spec differs from the vendored one (args: --tag vX | --branch forgejo | --file p)"
+run = '''
+set -eu
+# Exit status 3 means "they differ" — distinct from 1 so that
+# .github/workflows/spec-drift.yaml can branch on drift versus a real failure.
+# Run daily there against the `forgejo` development branch (tracking issue) and
+# the latest release tag (bump PR); run here to answer "what changed upstream"
+# before a bump, e.g. `mise run spec-diff -- --tag v16.0.5`.
+cargo xtask spec-diff "$@"
+'''
 
 [tasks.codegen-check]
 description = "Fail if the committed generated trees are stale or hand-edited (CI drift guard)"

@@ -163,6 +163,39 @@ cargo xtask codegen --accept-renames     # rewrites the lock, prints a changelog
 cargo xtask codegen --accept-removals    # for an endpoint that disappeared (breaking)
 ```
 
+### Seeing what moved upstream before you bump
+
+```bash
+mise run spec-diff -- --tag v16.0.5      # a release: what would `update-spec` change?
+mise run spec-diff -- --branch forgejo   # the development branch: what is coming?
+```
+
+`spec-diff` canonicalizes the upstream document exactly as `update-spec` does and prints a
+Markdown report — operations added, removed and changed, parameter changes, **response status
+and schema changes**, shared-response changes with the operations that use them, and definition
+property changes — instead of an 850 KB JSON diff. It exits 3 when the two differ, which is what
+the automation below branches on.
+
+### The automation
+
+[`spec-drift.yaml`](.github/workflows/spec-drift.yaml) runs `spec-diff` daily against two
+upstream refs:
+
+- **the `forgejo` development branch** — the report goes into one tracking issue labelled
+  `spec-drift`, rewritten on every run and closed when the drift disappears. Nothing is bumped:
+  it is an early warning that a response shape is moving.
+- **the latest release tag** — on any difference, or on a newer tag with an identical spec, the
+  workflow runs the three commands above (`update-spec --no-verify`, `spec-stats`, `codegen`)
+  and opens a pull request on `spec/bump-<tag>`, labelled `spec-bump`. If codegen refuses
+  because a command was renamed or removed, it retries with the accept flags and labels the PR
+  `breaking`; the rename report is in the PR body.
+
+The one step it deliberately leaves to a human is `stats.rs`: its expected counts are the
+loader's independent self-test, so the PR body carries the new `spec-stats` table and a
+checklist item to transcribe it. A `SPEC_BOT_TOKEN` repository secret (a fine-grained PAT with
+contents and pull-requests write) makes CI run on the bot's PR; without it, GitHub's rule that
+`GITHUB_TOKEN` cannot trigger workflows means the PR needs a close/reopen or a push first.
+
 ## mise is the source of truth for tools and tasks
 
 Every tool version and every gate lives in `.mise/config.toml`. [mise](https://mise.jdx.dev)

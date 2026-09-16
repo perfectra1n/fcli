@@ -44,7 +44,7 @@ pub const EXPECTED_PLACEHOLDERS: [&str; 2] = ["{{AppSubUrl | JSEscape}}", "{{App
 /// configured host URL at runtime, so the vendored spec pins the bare API root.
 pub const BASE_PATH: &str = "/api/v1";
 
-pub fn run(root: &Path, version: &str, dry_run: bool) -> Result<()> {
+pub fn run(root: &Path, version: &str, dry_run: bool, verify: bool) -> Result<()> {
     let (tag, bare) = normalize_version(version)?;
     let url = spec::source_url(&tag);
 
@@ -97,6 +97,9 @@ pub fn run(root: &Path, version: &str, dry_run: bool) -> Result<()> {
         toml::to_string_pretty(&lock)?
     );
     wrote += usize::from(write_if_changed(&spec::lock_path(root), lock_text.as_bytes())?);
+    for stale in remove_stale_canonicals(&dir, &lock.canonical)? {
+        eprintln!("  removed:   {} (superseded by {})", stale.display(), lock.canonical);
+    }
 
     if wrote == 0 {
         eprintln!("spec/ is already at {} — nothing to do", lock.tag);
@@ -104,7 +107,36 @@ pub fn run(root: &Path, version: &str, dry_run: bool) -> Result<()> {
         eprintln!("wrote {wrote} file(s) under spec/ for {}", lock.tag);
         eprintln!("  next: cargo xtask codegen --check-names");
     }
+    if !verify {
+        // The expected counts in stats.rs are for ONE version, so on a bump `verify` fails
+        // by design until a human re-derives them. The spec-drift workflow passes
+        // --no-verify to get the files written and leaves that step in the PR checklist;
+        // the counts it printed above are the input to it.
+        eprintln!(
+            "note: --no-verify given; update the expected counts in crates/xtask/src/stats.rs"
+        );
+        return Ok(());
+    }
     stats.verify(&bare)
+}
+
+/// Deletes every `forgejo-v*.json` under `dir` other than `keep`, returning what it removed.
+///
+/// `lock.toml` names exactly one canonical file, and [`crate::spec::load`] reads only that
+/// one, so a previous version's file is dead weight — 850 KB of it — that a reader has to
+/// notice is unreferenced. Removing it here keeps "the vendored spec" a single file.
+fn remove_stale_canonicals(dir: &Path, keep: &str) -> Result<Vec<std::path::PathBuf>> {
+    let mut removed = Vec::new();
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        if name.starts_with("forgejo-v") && name.ends_with(".json") && name != keep {
+            std::fs::remove_file(&path)?;
+            removed.push(path);
+        }
+    }
+    removed.sort();
+    Ok(removed)
 }
 
 /// Accepts `v16.0.4` or `16.0.4` and returns `(tag, bare)`.
@@ -120,7 +152,7 @@ fn normalize_version(v: &str) -> Result<(String, String)> {
     Ok((format!("v{bare}"), bare.to_owned()))
 }
 
-fn fetch(url: &str) -> Result<String> {
+pub(crate) fn fetch(url: &str) -> Result<String> {
     let out = Command::new("curl")
         .args([
             "--silent",
@@ -355,6 +387,25 @@ mod tests {
         )
         .unwrap();
         assert!(out.find("zebra").unwrap() < out.find("apple").unwrap());
+    }
+
+    #[test]
+    fn stale_canonical_files_are_removed_but_the_current_one_and_the_rest_are_kept() {
+        // A bump from v16.0.4 to v16.0.5 writes forgejo-v16.0.5.json; without this, the
+        // v16.0.4 file lingers next to it, unreferenced by lock.toml, and the next reader
+        // has two "vendored specs" to choose between.
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["forgejo-v16.0.4.json", "forgejo-v16.0.5.json", "v1_json.tmpl", "lock.toml"] {
+            std::fs::write(dir.path().join(name), "x").unwrap();
+        }
+        let removed = remove_stale_canonicals(dir.path(), "forgejo-v16.0.5.json").unwrap();
+        assert_eq!(removed, vec![dir.path().join("forgejo-v16.0.4.json")]);
+        let mut left: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["forgejo-v16.0.5.json", "lock.toml", "v1_json.tmpl"]);
     }
 
     #[test]

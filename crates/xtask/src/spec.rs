@@ -27,6 +27,15 @@ pub fn source_url(tag: &str) -> String {
     format!("https://codeberg.org/forgejo/forgejo/raw/tag/{tag}/templates/swagger/v1_json.tmpl")
 }
 
+/// The same template on a moving branch — `forgejo` is upstream's development branch. Only
+/// `spec-diff` reads this; `update-spec` deliberately cannot, because a branch is not a
+/// version and the vendored spec must stay pinnable.
+pub fn branch_url(branch: &str) -> String {
+    format!(
+        "https://codeberg.org/forgejo/forgejo/raw/branch/{branch}/templates/swagger/v1_json.tmpl"
+    )
+}
+
 pub fn spec_dir(root: &Path) -> PathBuf {
     root.join("spec")
 }

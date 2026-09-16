@@ -28,7 +28,7 @@ fjo-raw = { version = "0.1.0", path = "crates/fjo-raw" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 serde_path_to_error = "0.1"
-toml = "0.9"
+toml = "1.0"
 bytes = "1"
 
 # --- http / async ---
@@ -50,7 +50,7 @@ http = "1"
 # `Box::leak` every one of them.
 clap = { version = "4.6", features = ["derive", "wrap_help", "env", "string"] }
 clap_complete = "4.6"
-clap_mangen = "0.2"
+clap_mangen = "0.3"
 anstyle = "1"
 anstream = "1"
 terminal_size = "0.4"
@@ -88,10 +88,10 @@ jaq-std = "3"
 # --- codegen (xtask only) ---
 proc-macro2 = "1"
 quote = "1"
-syn = { version = "2", features = ["full", "parsing", "printing"] }
-prettyplease = "0.2"
+syn = { version = "3", features = ["full", "parsing", "printing"] }
+prettyplease = "0.3"
 heck = "0.5"
-sha2 = "0.10"
+sha2 = "0.11"
 
 # --- dev / test ---
 # Pinned exactly: the itest harness depends on how `get_host()` resolves the daemon address
