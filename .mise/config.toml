@@ -444,8 +444,50 @@ exit "$fail"
 
 # ---------------------------------------------------------------------------
 
+[tasks.coverage-check]
+description = "Ratchet gate: fail if untested raw operations or porcelain commands grow"
+run = '''
+set -eu
+# RATCHET: the number of commands NEVER driven against a real Forgejo must not
+# GROW, and the target for both numbers is zero.
+#
+# Why this gate exists at all: CONTRIBUTING.md's "Verification is uneven" note
+# says most porcelain groups have only been driven through FakeTransport and
+# insta snapshots, never against a server -- so a green `mise run test` is not
+# evidence that the wire format is right. That sentence described a fact nobody
+# could measure. This measures it.
+#
+# Two planes, deliberately gated differently:
+#   * contract -- every one of the 506 operations had its composed request
+#     checked against its own metadata (crates/fjo/tests/raw_contract.rs). That
+#     test is a LOOP over OPS, so coverage is complete by construction and any
+#     gap means an operation was added to a skip list. Hard failure at one.
+#   * live -- the operation was driven against a real Forgejo. Genuine debt, so
+#     a count budget that drains.
+#
+# The numbers are counted from journals the tests write AS THEY RUN, not from a
+# grep over the sources. That is the whole design: `instance_or_skip!` makes a
+# test return early and PASS when Docker is missing, so a source scan would
+# report full coverage over a suite that executed nothing. See
+# crates/fjo-itest/src/coverage.rs.
+#
+# To drain one: `cargo xtask coverage-check --list` names what is uncovered.
+RAW_BUDGET=506
+PORCELAIN_BUDGET=244
+# The hermetic half first -- it writes the porcelain inventory and the contract
+# journal that the ratchet reads, and it needs no Docker.
+FJO_COVERAGE_DIR="$PWD/target/fjo-coverage" cargo test --locked -p fjo \
+  --test porcelain_inventory --test raw_contract
+# Then the live half, which records what it drove.
+cargo xtask itest
+cargo xtask coverage-check --raw-budget "$RAW_BUDGET" --porcelain-budget "$PORCELAIN_BUDGET"
+'''
+
 [tasks.ratchets]
 description = "Every ratchet gate, in one go"
+# coverage-check is deliberately NOT here: it needs Docker, and `mise run
+# ratchets` is the fast text-scan gate a developer runs constantly. CI runs it
+# as part of the integration job instead.
 depends = ["panic-check", "exit-check", "support-check", "zero-check", "complexity-check"]
 
 [tasks.ci]

@@ -55,6 +55,13 @@ pub fn run(root: &Path, opts: Options) -> Result<()> {
         cmd.arg("--").arg(filter);
     }
 
+    // Coverage is recorded by the tests themselves, into one journal per process (see
+    // crates/fjo-itest/src/coverage.rs). Stale journals are cleared first: a previous run's
+    // records would otherwise make a suite that has since stopped driving an operation keep
+    // looking covered, which is the one direction this measurement must not drift.
+    let coverage_dir = coverage_dir(root)?;
+    cmd.env(crate::coverage::DIR_ENV, &coverage_dir);
+
     if !opts.allow_skip {
         cmd.env("FJO_ITEST_REQUIRE", "1");
     }
@@ -90,4 +97,22 @@ fn build_binary(root: &Path) -> Result<()> {
         bail!("`cargo build -p fjo` failed, so there is nothing to integration-test");
     }
     Ok(())
+}
+
+/// The journal directory, emptied of the previous run's live records.
+///
+/// Only `live-*.jsonl` is removed. The porcelain inventory and the hermetic contract journal
+/// are written by the *other* suite, and deleting them here would make
+/// `cargo xtask coverage-check` report a contract gap of 506 whenever the integration suite ran
+/// second — a failure with nothing wrong behind it.
+fn coverage_dir(root: &Path) -> Result<std::path::PathBuf> {
+    let dir = root.join(crate::coverage::DEFAULT_DIR);
+    std::fs::create_dir_all(&dir)?;
+    for entry in std::fs::read_dir(&dir)? {
+        let entry = entry?;
+        if entry.file_name().to_string_lossy().starts_with("live-") {
+            std::fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(dir)
 }

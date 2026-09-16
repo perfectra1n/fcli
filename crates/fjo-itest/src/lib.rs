@@ -22,6 +22,8 @@
 // genuinely broken for the only audience that sees it.
 #![allow(rustdoc::private_intra_doc_links)]
 
+pub mod coverage;
+
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};

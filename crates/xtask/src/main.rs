@@ -35,6 +35,7 @@ macro_rules! bail {
     };
 }
 
+mod coverage;
 mod emit;
 mod ir;
 mod itest;
@@ -137,6 +138,26 @@ enum Cmd {
         accept_removals: bool,
     },
 
+    /// Ratchet: how much of the command surface the test suites actually drove.
+    ///
+    /// Reads the journals the suites write (see crates/fjo-itest/src/coverage.rs) and compares
+    /// them against spec/name-lock.toml and the porcelain inventory. The contract plane is a
+    /// hard failure at one gap; the live planes are count budgets that drain.
+    CoverageCheck {
+        /// Journal directory. Defaults to target/fjo-coverage under the workspace root.
+        #[arg(long)]
+        dir: Option<PathBuf>,
+        /// Ceiling on live raw operations still untested.
+        #[arg(long, default_value_t = 0)]
+        raw_budget: usize,
+        /// Ceiling on live porcelain commands still untested.
+        #[arg(long, default_value_t = 0)]
+        porcelain_budget: usize,
+        /// Print the uncovered ids. How you find what to write next.
+        #[arg(long, action = ArgAction::SetTrue)]
+        list: bool,
+    },
+
     /// Run the integration suite against a real Forgejo, booting one in Docker if needed.
     Itest {
         /// Leave the container running afterwards for inspection.
@@ -225,6 +246,11 @@ fn run_unit(root: &Path, cmd: Cmd) -> Result<()> {
                 stats.verify(&loaded.lock.version)
             }
         }
+
+        Cmd::CoverageCheck { dir, raw_budget, porcelain_budget, list } => coverage::run(
+            root,
+            coverage::Options { dir, raw_budget, porcelain_budget, list },
+        ),
 
         Cmd::Itest { keep, image, allow_skip, filter } => {
             itest::run(root, itest::Options { keep, image, allow_skip, filter })
