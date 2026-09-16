@@ -65,7 +65,7 @@ pub struct Overrides {
     #[serde(default)]
     pub demote_required: Vec<String>,
 
-    /// Group name → one-line description, for `fcli raw --help`.
+    /// Group name → one-line description, for `fjo raw --help`.
     #[serde(default)]
     pub group_doc: BTreeMap<String, String>,
 
@@ -136,8 +136,8 @@ mod tests {
     #[test]
     fn every_pascal_case_operation_id_is_overridden() {
         // The 16 PascalCase ids are Actions and Git endpoints. Without overrides the mangler
-        // derives their group from `tags[0]` (`repository`), burying `fcli raw run list` at
-        // `fcli raw repo list-action-runs`.
+        // derives their group from `tags[0]` (`repository`), burying `fjo raw run list` at
+        // `fjo raw repo list-action-runs`.
         const PASCAL: [&str; 16] = [
             "ActionRun",
             "CancelActionRun",

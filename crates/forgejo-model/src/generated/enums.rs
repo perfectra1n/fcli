@@ -9,7 +9,7 @@
 //! Each of these is a string that the specification — or `overrides.toml`, for the
 //! six Go named string types whose values the spec omits — lists known values for.
 //! They are *open*: an unlisted value deserializes into `Unknown` and re-serializes
-//! verbatim, so pointing `fcli` at a newer Forgejo cannot turn a listing into a
+//! verbatim, so pointing `fjo` at a newer Forgejo cannot turn a listing into a
 //! decode error. See `crate::open_enum` for the four properties that buys.
 
 crate::open_enum! {

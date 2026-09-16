@@ -1,0 +1,7 @@
+---
+source: crates/fjo/src/cmd/quota/mod.rs
+expression: "render_status(&Term::piped(), \"git.example.org\", \"you\", &quota())"
+---
+size:all	1073741824	839915520	78	small
+size:git:lfs	0	104857600		no-lfs
+size:assets:artifacts	-1	1048576		exempt

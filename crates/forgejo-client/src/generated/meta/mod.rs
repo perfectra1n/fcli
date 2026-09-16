@@ -6,7 +6,7 @@
 
 //! Generated layer-2 command metadata: the whole API as `&'static` data.
 //!
-//! `OPS` is the table `fcli raw` dispatches from. Two properties of it are
+//! `OPS` is the table `fjo raw` dispatches from. Two properties of it are
 //! load-bearing and asserted by this module's `invariants` tests:
 //!
 //! 1. It is sorted by `(group, command)`, which is what makes `lookup::op` a

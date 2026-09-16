@@ -8,7 +8,7 @@
 //!   `*int64` or `*bool` throughout, and the specification records only `"type": "string"`, so
 //!   the generator emits a plain `String`. `#[serde(default)]` covers an **absent** key, not an
 //!   explicit `null`, so `{"merge_commit_sha": null}` — the ordinary wire form of an *open*
-//!   pull request — is a hard failure against `String`. That one field took out every `fcli pr`
+//!   pull request — is a hard failure against `String`. That one field took out every `fjo pr`
 //!   command against any repository with an open pull request. [`null_as_default`] maps `null`
 //!   to the zero value, which is what the absent key would have produced anyway, and it is
 //!   attached to **every** plain scalar rather than to the fields we happen to have caught a
@@ -336,7 +336,7 @@ mod tests {
     fn an_unassigned_issue_decodes() {
         // The actual wire shape this exists for, against the actual generated model: Forgejo
         // sends `null` for every empty slice on an issue, and before `null_as_empty_vec` this
-        // input failed to deserialize — so `fcli issue list` lost every unassigned issue.
+        // input failed to deserialize — so `fjo issue list` lost every unassigned issue.
         let issue: crate::Issue = serde_json::from_str(
             r#"{"number":1,"title":"t","assignees":null,"labels":null,"assets":null}"#,
         )

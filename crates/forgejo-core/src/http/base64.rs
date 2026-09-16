@@ -12,7 +12,7 @@
 //! Base64 is not an implementation detail of this crate; it is part of the **API's data model**.
 //! `WikiPage.content_base64`, `CreateFileOptions.content`, `ChangeFileOperation.content` and
 //! both avatar endpoints all carry base64 in a JSON body, so every consumer of the generated
-//! client needs a codec to use them at all. Keeping it private forced `fcli` to hand-roll a
+//! client needs a codec to use them at all. Keeping it private forced `fjo` to hand-roll a
 //! second copy under `cmd/wiki/b64.rs`, with a module comment saying so.
 //!
 //! Only the standard alphabet is implemented. Forgejo does not use the URL-safe one anywhere in

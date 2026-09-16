@@ -20,7 +20,7 @@
 //! - A directory listing sends `encoding`, `content`, `target` and `submodule_git_url` as
 //!   `null` — the spec's own descriptions say so — which failed the `Many` arm of the untagged
 //!   `ContentsResponseOrList`, and serde then matched `One`, yielding an all-default entry with
-//!   `name: ""` and `type: ""`. `fcli workflow list` filtered that away and printed nothing,
+//!   `name: ""` and `type: ""`. `fjo workflow list` filtered that away and printed nothing,
 //!   with exit 0, for a repository that has `ci.yml`. A wrong answer delivered as a success.
 
 use forgejo_model::{ContentsResponse, ContentsResponseOrList, Issue, PullRequest, Repository};
@@ -186,7 +186,7 @@ fn an_open_pull_request_decodes() {
 }
 
 /// Every `null` in the payload, enumerated, so that a new one in a future Forgejo shows up as a
-/// named failure rather than as "`fcli pr list` stopped working".
+/// named failure rather than as "`fjo pr list` stopped working".
 #[test]
 fn every_null_in_the_open_pull_request_payload_is_tolerated() {
     let v: serde_json::Value = serde_json::from_str(OPEN_PULL_REQUEST).unwrap();
@@ -263,7 +263,7 @@ fn nulls_in_the_other_hot_models_are_tolerated() {
 
 // ------------------------------------------------- bug 2: an untagged enum that matched anything
 
-/// **The regression test for `fcli workflow list` silently printing nothing.**
+/// **The regression test for `fjo workflow list` silently printing nothing.**
 ///
 /// Under `#[serde(untagged)]` this array failed `Many` on the four nulls and then *matched*
 /// `One`, because a struct whose every field defaults matches any input serde hands it. The
@@ -292,7 +292,7 @@ fn a_directory_listing_decodes_as_a_list() {
         other => panic!("unexpected variant: {other:?}"),
     }
 
-    // What `fcli workflow list` actually does with it.
+    // What `fjo workflow list` actually does with it.
     let files: Vec<&ContentsResponse> =
         got.as_slice().iter().filter(|c| c.r#type == "file").collect();
     assert_eq!(files.len(), 1, "the workflow filter must find ci.yml");

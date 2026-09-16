@@ -19,7 +19,7 @@
 //!   Forgejo sends for things like `merged_at` on an unmerged pull request.
 //!
 //! Tolerant is not silent: unknown enum values and unparseable values are recorded in
-//! [`forgejo_core::error::compat`], which `fcli` drains into one grouped note at exit.
+//! [`forgejo_core::error::compat`], which `fjo` drains into one grouped note at exit.
 //!
 //! ## What they do not promise
 //!

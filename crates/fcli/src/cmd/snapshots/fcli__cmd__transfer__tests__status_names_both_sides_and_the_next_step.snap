@@ -1,9 +1,0 @@
----
-source: crates/fcli/src/cmd/transfer.rs
-expression: out
----
-repository  ada/widget
-transfer    pending
-offered by  ada
-offered to  grace
-next step   the recipient runs `fcli transfer accept -R ada/widget` (or `reject`) with their own to…

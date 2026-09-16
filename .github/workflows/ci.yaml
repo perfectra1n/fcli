@@ -141,7 +141,7 @@ jobs:
           shared-key: release
 
       # Startup and size budgets. The generated layer holds 506 commands; if it
-      # ever starts being constructed eagerly, `fcli --version` is where that
+      # ever starts being constructed eagerly, `fjo --version` is where that
       # shows up first. The task builds the release binary itself (`depends`).
       - name: Startup and size budgets
         run: mise run budget-check

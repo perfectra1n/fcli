@@ -31,7 +31,7 @@ pub const WRAP: usize = 96;
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct Doc {
     /// First sentence, plain text. clap `about`, and the summary column of
-    /// `fcli raw search`.
+    /// `fjo raw search`.
     pub short: String,
     /// Full text, plain, wrapped. clap `long_about`.
     pub long: Vec<String>,

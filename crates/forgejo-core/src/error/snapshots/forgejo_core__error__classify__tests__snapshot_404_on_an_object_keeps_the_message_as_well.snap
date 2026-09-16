@@ -4,13 +4,13 @@ expression: "rendered(404, &json(), br#\"{\"message\":\"pull request 4212 has be
 ---
 error: there is no pull request 4212 (HTTP 404)
 
-  request:      GET /api/v1/repos/perf3ct/fcli/pulls/4212
-  repository:   perf3ct/fcli  (found)
+  request:      GET /api/v1/repos/perf3ct/fjo/pulls/4212
+  repository:   perf3ct/fjo  (found)
   pull request: 4212
   server says:  pull request 4212 has been deleted
 
 what to do:
   check the pull request identifier and list the available resources:
-  1. fcli pr list --state all -R perf3ct/fcli
+  1. fjo pr list --state all -R perf3ct/fjo
   note: most issue and pull request paths use the number shown in the web
         UI, not the database ID.

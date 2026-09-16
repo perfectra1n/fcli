@@ -10,5 +10,5 @@ error: unknown --json field: titel
 
 what to do:
   use --json for top-level fields and --jq for nested fields.
-  1. fcli pr list --json  (list available fields)
-  2. fcli pr list --jq '.[].head.ref'  (select a nested field)
+  1. fjo pr list --json  (list available fields)
+  2. fjo pr list --jq '.[].head.ref'  (select a nested field)

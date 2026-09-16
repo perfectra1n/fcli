@@ -1,8 +1,0 @@
----
-source: crates/fcli/src/cmd/admin/quota.rs
-expression: "seen.join(\"\\n\")"
----
-PUT /api/v1/admin/quota/groups/small/rules/tight
-DELETE /api/v1/admin/quota/groups/small/rules/tight
-PUT /api/v1/admin/quota/groups/small/users/ada
-DELETE /api/v1/admin/quota/groups/small/users/ada

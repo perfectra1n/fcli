@@ -1,0 +1,5 @@
+---
+source: crates/fjo/src/cmd/quota/mod.rs
+expression: "testing::as_json(RULE_FIELDS, \"name,limit,subjects\",\nporcelain::json_of(&own_rules(&quota())).unwrap())"
+---
+[{"name":"small","limit":1073741824,"subjects":["size:all"]},{"name":"no-lfs","limit":0,"subjects":["size:git:lfs"]},{"name":"exempt","limit":-1,"subjects":["size:assets:artifacts"]}]

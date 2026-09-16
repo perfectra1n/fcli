@@ -1,14 +1,14 @@
 ---
 source: crates/forgejo-core/src/error/render.rs
-expression: "snap(ErrorKind::RouteNotFound\n{\n    method: \"POST\".into(), path:\n    \"/api/v1/repos/perf3ct/fcli/actions/runs/12/rerun\".into(), instance:\n    Some(\"forgejo 7.0.0\".into()),\n}, c)"
+expression: "snap(ErrorKind::RouteNotFound\n{\n    method: \"POST\".into(), path:\n    \"/api/v1/repos/perf3ct/fjo/actions/runs/12/rerun\".into(), instance:\n    Some(\"forgejo 7.0.0\".into()),\n}, c)"
 ---
 error: API endpoint not found (HTTP 404)
 
-  request:  POST /api/v1/repos/perf3ct/fcli/actions/runs/12/rerun
+  request:  POST /api/v1/repos/perf3ct/fjo/actions/runs/12/rerun
   instance: forgejo 7.0.0
 
 what to do:
   the server does not support this endpoint or HTTP method.
-  1. fcli api settings/api  (server API settings)
+  1. fjo api settings/api  (server API settings)
   2. try the web interface at https://git.example.org
   note: check whether the server version supports this operation.

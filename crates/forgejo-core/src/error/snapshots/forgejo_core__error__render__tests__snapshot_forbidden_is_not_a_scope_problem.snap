@@ -4,12 +4,12 @@ expression: "snap(ErrorKind::Forbidden\n{ server_message: \"user is not a collab
 ---
 error: permission denied (HTTP 403)
 
-  request:     POST /api/v1/repos/perf3ct/fcli/issues
+  request:     POST /api/v1/repos/perf3ct/fjo/issues
   server says: user is not a collaborator on this repository
-  token from:  the OS keyring, entry fcli:git.example.org
+  token from:  the OS keyring, entry fjo:git.example.org
 
 what to do:
   the server denied this action. Check the message and your account permissions.
-  1. fcli api user --jq .login  (confirm who you are)
+  1. fjo api user --jq .login  (confirm who you are)
   2. ask for the access you need, or, as an instance admin, act as
      someone who has it with --sudo <user>

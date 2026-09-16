@@ -53,7 +53,7 @@ use crate::error::{Error, ErrorKind, RequestCtx, Result, TokenSource};
 /// `Request::method` is an `http::Method`, so any caller that wants to name the type — to build
 /// a `Request` for a method with no constructor, to match on one, or to register a canned reply
 /// in a test — otherwise has to add `http` to its own `Cargo.toml` purely to spell one word.
-/// Several `fcli` modules contorted around exactly that: a throwaway `Request::get("/")` built
+/// Several `fjo` modules contorted around exactly that: a throwaway `Request::get("/")` built
 /// only so `.method` could be lifted off it, and a comment explaining why. A published SDK
 /// whose public types cannot be named without a second dependency is an incomplete SDK, so the
 /// type comes with it.
@@ -224,7 +224,7 @@ pub struct Request {
     /// `&'static str` and not a `String` or a `Cow`: every producer of this value has one
     /// already — a literal in generated code, `OpMeta::scope` in layer 2 — so it costs no
     /// allocation and keeps `Request: Clone` as cheap as it was. `None` for a caller who does
-    /// not know, such as `fcli api`, where the user types a raw path; classification then falls
+    /// not know, such as `fjo api`, where the user types a raw path; classification then falls
     /// back to inference rather than rendering a blank `needs:` line.
     ///
     /// Naming a scope is *all* this does. It does not decide whether a 403 is a scope problem —
@@ -596,7 +596,7 @@ impl Client {
         });
         let Some(rest) = rest else {
             return Err(Error::new(ErrorKind::Usage(format!(
-                "{url} is outside {base}. fcli will not send your token to this external URL. Download it separately with curl or a browser."
+                "{url} is outside {base}. fjo will not send your token to this external URL. Download it separately with curl or a browser."
             ))));
         };
         let mut req = Request::get(if rest.is_empty() { "/" } else { rest });
@@ -641,7 +641,7 @@ impl Client {
     ///
     /// # Concurrent first calls probe once, not once each
     ///
-    /// Commands fan out: `fcli status` drives four [`paginate`] walks at once, and every walk
+    /// Commands fan out: `fjo status` drives four [`paginate`] walks at once, and every walk
     /// asks for capabilities before its first request. Without a gate all four would miss the
     /// cold cache, all four would probe, and one invocation would spend **eight** requests where
     /// two do — growing with every command that learns to overlap its reads. So the loser of the
@@ -1623,14 +1623,14 @@ mod tests {
     async fn request_context_records_host_method_path_and_repo() {
         let c = client(FakeTransport::new().on(
             Method::POST,
-            "/api/v1/repos/perf3ct/fcli/issues",
+            "/api/v1/repos/perf3ct/fjo/issues",
             Canned::json(422, r#"{"errors":["title is empty"]}"#),
         ));
-        let e = c.value(Request::post("/repos/perf3ct/fcli/issues")).await.unwrap_err();
+        let e = c.value(Request::post("/repos/perf3ct/fjo/issues")).await.unwrap_err();
         assert_eq!(e.ctx.host.as_deref(), Some("git.example.org"));
         assert_eq!(e.ctx.method.as_deref(), Some("POST"));
-        assert_eq!(e.ctx.path.as_deref(), Some("/api/v1/repos/perf3ct/fcli/issues"));
-        assert_eq!(e.ctx.repo.as_deref(), Some("perf3ct/fcli"));
+        assert_eq!(e.ctx.path.as_deref(), Some("/api/v1/repos/perf3ct/fjo/issues"));
+        assert_eq!(e.ctx.repo.as_deref(), Some("perf3ct/fjo"));
         assert_eq!(e.ctx.status, Some(422));
     }
 
@@ -1756,7 +1756,7 @@ mod tests {
 
     /// `Request::method` is an `http::Method`, so the type has to be nameable through this
     /// crate. Without the re-export a caller has to put `http` in its own `Cargo.toml` to spell
-    /// one word — which is what every `fcli` test module was working around.
+    /// one word — which is what every `fjo` test module was working around.
     #[test]
     fn the_http_method_type_is_nameable_without_depending_on_the_http_crate() {
         let m: crate::http::Method = crate::http::Method::PATCH;
@@ -1825,7 +1825,7 @@ mod tests {
         assert_eq!(needed_of(&e), vec!["write:repository".to_owned()]);
     }
 
-    /// The fallback survives. `fcli api` lets a user type a path we have no operation for, and a
+    /// The fallback survives. `fjo api` lets a user type a path we have no operation for, and a
     /// rendering that said "create a NEW token that includes  at" was a real bug.
     #[tokio::test]
     async fn a_request_without_a_scope_falls_back_to_inference_rather_than_saying_nothing() {

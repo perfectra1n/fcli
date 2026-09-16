@@ -143,7 +143,7 @@ impl fmt::Debug for OutBody {
 
 /// Status, headers, and an unbuffered body.
 ///
-/// The body stays a stream so that `fcli release download` of a 2 GB asset never buffers. The
+/// The body stays a stream so that `fjo release download` of a 2 GB asset never buffers. The
 /// error paths buffer explicitly via [`Response::bytes`], because classification needs the
 /// whole (small) error body.
 pub struct Response {

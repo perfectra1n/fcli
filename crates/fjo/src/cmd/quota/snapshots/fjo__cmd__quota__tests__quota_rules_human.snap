@@ -1,0 +1,10 @@
+---
+source: crates/fjo/src/cmd/quota/mod.rs
+expression: "render_rules(&testing::term(), &own_rules(&info))"
+---
+Showing 3 rules
+
+NAME    LIMIT      SUBJECTS
+small   1.0 GiB    size:all
+no-lfs  0 B        size:git:lfs
+exempt  unlimited  size:assets:artifacts

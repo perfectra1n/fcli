@@ -1,8 +1,0 @@
----
-source: crates/fcli/src/cmd/issue/ops.rs
-expression: text(&buf)
----
-Showing 1 open issue in perf3ct/fcli
-
-NUMBER  STATE  TITLE     LABELS  UPDATED
-#42     open   It broke  bug     about 1 hour ago

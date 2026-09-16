@@ -8,7 +8,7 @@ error: OS keyring is unavailable
 
 what to do:
   unlock or enable the keyring, or use one of these alternatives:
-  1. fcli auth login --host git.example.org --insecure-storage  (a 0600 file)
-  2. FCLI_TOKEN=<token> fcli auth status  (environment only)
-  note: set FCLI_CREDENTIAL_STORE to env, file, or keyring to select a
+  1. fjo auth login --host git.example.org --insecure-storage  (a 0600 file)
+  2. FJO_TOKEN=<token> fjo auth status  (environment only)
+  note: set FJO_CREDENTIAL_STORE to env, file, or keyring to select a
         storage backend.

@@ -6,7 +6,7 @@
 //! decision rather than a style preference. There are 506 operations. A single generic parameter
 //! — `body: &impl Serialize`, or a `T: DeserializeOwned` return — monomorphises per operation
 //! *and* per call site, so the cost of 42k generated lines stops being linear in the line count
-//! and starts being linear in how much code uses it. `fcli` alone would instantiate the same
+//! and starts being linear in how much code uses it. `fjo` alone would instantiate the same
 //! machinery hundreds of times.
 //!
 //! So every polymorphic thing lives in hand-written `forgejo-core`: `Client::json` is generic,
@@ -180,7 +180,7 @@ impl<'a> Ctx<'a> {
     /// It lives here and not in `forgejo-core` because core is deliberately spec-agnostic, and
     /// because the only drift-proof spelling available there — `include_str!` of
     /// `spec/lock.toml` — reads a file outside the package root, which `cargo package` drops.
-    /// That would break publishing; `fcli` gets away with the same trick only because it is
+    /// That would break publishing; `fjo` gets away with the same trick only because it is
     /// `publish = false`.
     fn spec_module(&self) -> TokenStream {
         let version = &self.ir.spec_version;
@@ -356,7 +356,7 @@ impl<'a> Ctx<'a> {
         }
 
         Ok(quote! {
-            #![doc = " One typed method per API operation, grouped the way `fcli` groups commands."]
+            #![doc = " One typed method per API operation, grouped the way `fjo` groups commands."]
             #![doc = ""]
             #![doc = " Every method here is concrete: no type parameters, no `impl Trait` arguments."]
             #![doc = " All polymorphism lives in hand-written `forgejo_core::http`. See the emitter"]
@@ -1465,7 +1465,7 @@ mod tests {
         assert!(src.contains("encode::seg(sha), encode::seg(diff_type)"), "{src}");
     }
 
-    /// `fcli raw repo get-contents o r src/main.rs` 404s if `filepath` is encoded as a segment,
+    /// `fjo raw repo get-contents o r src/main.rs` 404s if `filepath` is encoded as a segment,
     /// because it asks for a file literally named `src/main.rs` in the root.
     #[test]
     fn a_path_like_parameter_keeps_its_slashes() {

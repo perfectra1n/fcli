@@ -7,10 +7,10 @@ error: git.example.org refused your token (HTTP 401)
   request:    GET /api/v1/user
   host:       git.example.org
   login:      perf3ct
-  token from: the OS keyring, entry fcli:git.example.org
+  token from: the OS keyring, entry fjo:git.example.org
 
 what to do:
   the token may be expired, revoked, or from another server.
   1. create a new token at https://git.example.org/user/settings/applications
-  2. fcli auth login --host git.example.org
+  2. fjo auth login --host git.example.org
   note: replacing a token requires creating a new one.

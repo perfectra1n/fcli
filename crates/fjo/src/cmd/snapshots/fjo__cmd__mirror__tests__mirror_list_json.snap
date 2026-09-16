@@ -1,0 +1,5 @@
+---
+source: crates/fjo/src/cmd/mirror.rs
+expression: "testing::as_json(MIRROR_FIELDS,\n\"remote_name,remote_address,branch_filter,interval,sync_on_commit\",\nporcelain::json_of(&mirrors()).unwrap())"
+---
+[{"remote_name":"remote_mirror_abc123","remote_address":"https://github.com/me/proj.git","branch_filter":"","interval":"8h0m0s","sync_on_commit":true},{"remote_name":"remote_mirror_def456","remote_address":"https://codeberg.org/me/proj.git","branch_filter":"main, release/*","interval":"10m0s","sync_on_commit":false}]

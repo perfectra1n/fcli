@@ -47,7 +47,7 @@ pub struct Ir {
     pub cyclic_models: BTreeSet<String>,
 }
 
-/// A layer-2 command group: `fcli raw <name> <command>`.
+/// A layer-2 command group: `fjo raw <name> <command>`.
 #[derive(Debug, Serialize)]
 pub struct Group {
     pub name: String,
@@ -170,7 +170,7 @@ pub enum PathEncoding {
     /// from an owner literally named `a/b`.
     Segment,
     /// `/` is preserved. For parameters that legitimately contain a path — get this wrong and
-    /// `fcli raw repo get-contents o r src/main.rs` 404s with no hint why.
+    /// `fjo raw repo get-contents o r src/main.rs` 404s with no hint why.
     PathLike,
 }
 
