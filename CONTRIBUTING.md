@@ -239,6 +239,33 @@ data table by a two-phase parse in `main`, and if that ever regresses to eager c
 decision from the other side: ~61k generated lines with zero type generics and no
 macros-with-logic, so nothing monomorphises per call site.
 
+## Releases, and why your commit subject decides whether one happens
+
+Releases are cut by release-please, which reads commit subjects. A commit that is not
+`type(scope): subject` is invisible to it — no changelog line, and if it is the only commit since
+the last release, no release at all. This fails silently, which is the whole trap: nothing errors,
+the release PR simply never appears.
+
+Merging to `main` opens (or updates) a `chore(release): x.y.z` pull request holding the version bump
+and the `CHANGELOG.md` entry. Merging *that* tags the commit and creates the GitHub Release;
+`release.yaml` then builds the five archives and attaches them.
+
+Two details are worth knowing before they surprise you.
+
+- **The version lives in `.release-please-manifest.json`, not in any `Cargo.toml`.** release-please
+  runs as release-type `simple`. Its Rust strategy cannot be used here: it calls `CargoToml` on the
+  workspace root, which throws on a manifest with no `[package]` section, and this root is virtual.
+  So the crates stay at their own versions and `fjo --version` lags the tag. `release.yaml`'s verify
+  job reads the JSON file for the same reason.
+- **`release.yaml` is dispatched, not triggered.** GitHub refuses to start a workflow from an event
+  raised by `GITHUB_TOKEN`, so the tag release-please pushes reaches nothing on its own.
+  `release-please.yaml` therefore calls `createWorkflowDispatch` at the new tag. Changing
+  `release.yaml`'s triggers without reading that comment will produce releases with no binaries.
+
+While the version is below 1.0, `bump-patch-for-minor-pre-major` and `bump-minor-pre-major` shift
+everything down a level: `feat` bumps the patch, and a breaking change (`!` or a `BREAKING CHANGE:`
+footer) bumps the minor rather than the major.
+
 ## Known rough edges, so you do not lose an afternoon
 
 - **Two renderers used to disagree with themselves, and the cause will recur.** `timeago` had a
