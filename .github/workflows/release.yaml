@@ -14,7 +14,7 @@ name: Release
 # Unlike ci.yaml this does NOT go through mise. mise is the task runner for the
 # gates; a release is plain `cargo build`, and the toolchain still comes from one
 # place — rust-toolchain.toml, which rustup honours on its own. Adding mise here
-# would put a third name on the same 1.95.0 pin.
+# would put a third name on the same 1.98.1 pin.
 
 on:
   push:
@@ -115,7 +115,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # No toolchain action: rustup is preinstalled on every GitHub runner and
-      # reads rust-toolchain.toml itself, so 1.95.0 is still defined in exactly
+      # reads rust-toolchain.toml itself, so 1.98.1 is still defined in exactly
       # one file.
       - name: Install target
         shell: bash

@@ -188,7 +188,7 @@ that cries wolf is a gate the first person it inconveniences deletes, and then
 the real defect ships behind a disabled check.
 
 **Not a clippy lint.** There is no such lint, and a custom one means `dylint`, a
-nightly driver and an install step, against a repo pinned to stable 1.95.0 whose
+nightly driver and an install step, against a repo pinned to stable 1.98.1 whose
 scanner documents "a lint gate that needs its own install step is a lint gate
 people delete". The property being checked is a *serde attribute* on the field,
 which a lint would have to read off the HIR anyway — far more machinery than the
