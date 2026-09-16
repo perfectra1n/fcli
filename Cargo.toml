@@ -91,7 +91,7 @@ quote = "1"
 syn = { version = "2", features = ["full", "parsing", "printing"] }
 prettyplease = "0.2"
 heck = "0.5"
-sha2 = "0.10"
+sha2 = "0.11"
 
 # --- dev / test ---
 # Pinned exactly: the itest harness depends on how `get_host()` resolves the daemon address
