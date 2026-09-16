@@ -2,14 +2,14 @@
 //!
 //! The resolution order below is fixed, and every miss records an [`Attempt`] so that a
 //! failure can *show its work*. "could not determine which repository to use" is a useless
-//! message; "I checked -R, then $FJO_REPO, then git config, then 3 remotes, and here is what
+//! message; "I checked -R, then $FCLI_REPO, then git config, then 3 remotes, and here is what
 //! each one said" is a message someone can act on.
 //!
 //! 1. `-R/--repo` — a [`RepoRef`], so `owner/name`, `host/owner/name`, or a URL. No git
-//!    repository required, which is what makes `fjo pr list -R other/repo` work from `$HOME`.
-//! 2. `$FJO_REPO`, then `$FORGEJO_REPO`.
+//!    repository required, which is what makes `fcli pr list -R other/repo` work from `$HOME`.
+//! 2. `$FCLI_REPO`, then `$FORGEJO_REPO`.
 //! 3. Not inside a git work tree → [`ErrorKind::RepoNotResolved`] carrying the attempts.
-//! 4. git config `remote.<name>.fjo-resolved`, written by `fjo repo set-default`.
+//! 4. git config `remote.<name>.fcli-resolved`, written by `fcli repo set-default`.
 //! 5. Remote-name scoring: `upstream` 3, `forgejo` 2, `codeberg` 2, `origin` 1, everything
 //!    else 0. Highest wins; a tie at the top is [`ErrorKind::AmbiguousRemote`].
 //! 6. Remotes exist but none names a configured host →
@@ -30,19 +30,19 @@ use crate::types::{RepoRef, RepoSlug};
 pub use git::{FakeGit, GitCli, GitCtx, Remote};
 pub use remote_url::{RemoteUrl, Resolution};
 
-/// The git config key suffix `fjo repo set-default` writes.
+/// The git config key suffix `fcli repo set-default` writes.
 ///
-/// Namespaced per remote (`remote.origin.fjo-resolved`) exactly as `gh` does with
+/// Namespaced per remote (`remote.origin.fcli-resolved`) exactly as `gh` does with
 /// `gh-resolved`, so both tools can coexist in one clone without fighting.
-pub const RESOLVED_SUFFIX: &str = "fjo-resolved";
+pub const RESOLVED_SUFFIX: &str = "fcli-resolved";
 
-/// The `fjo-resolved` value meaning "this remote is the repository".
+/// The `fcli-resolved` value meaning "this remote is the repository".
 pub const RESOLVED_BASE: &str = "base";
 
-/// The `fjo-resolved` value meaning "the user said none of these remotes".
+/// The `fcli-resolved` value meaning "the user said none of these remotes".
 pub const RESOLVED_NONE: &str = "NONE";
 
-/// `remote.<name>.fjo-resolved`.
+/// `remote.<name>.fcli-resolved`.
 pub fn resolved_key(remote: &str) -> String {
     format!("remote.{remote}.{RESOLVED_SUFFIX}")
 }
@@ -50,7 +50,7 @@ pub fn resolved_key(remote: &str) -> String {
 /// How much we prefer a remote by name.
 ///
 /// `upstream` outranks `origin` so that in a fork checkout — the normal contributor setup —
-/// `fjo pr create` and `fjo issue list` default to the upstream project rather than to the
+/// `fcli pr create` and `fcli issue list` default to the upstream project rather than to the
 /// contributor's own fork, which is where the pull request needs to go and where the issues
 /// live. `forgejo` and `codeberg` sit between them because a user who names a remote after
 /// the forge is naming the canonical one.
@@ -64,15 +64,15 @@ pub fn remote_score(name: &str) -> u8 {
 }
 
 /// Which rule produced a [`RepoContext`]. Surfaced by `--debug` and by
-/// `fjo repo set-default --view`, both of which exist to answer "why is fjo talking to
+/// `fcli repo set-default --view`, both of which exist to answer "why is fcli talking to
 /// *that* repository?".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RepoSource {
     /// `-R/--repo`.
     Flag,
-    /// `$FJO_REPO` or `$FORGEJO_REPO`.
+    /// `$FCLI_REPO` or `$FORGEJO_REPO`.
     Env { var: &'static str },
-    /// git config `remote.<remote>.fjo-resolved = <value>`.
+    /// git config `remote.<remote>.fcli-resolved = <value>`.
     GitConfig { remote: String, value: String },
     /// Remote-name scoring picked this remote.
     Remote { remote: String, score: u8 },
@@ -113,7 +113,7 @@ pub struct ResolveOptions<'a> {
 }
 
 /// Requires a git work tree, for commands that genuinely cannot work without one
-/// (`fjo repo set-default`, `fjo pr checkout`).
+/// (`fcli repo set-default`, `fcli pr checkout`).
 ///
 /// [`resolve_repo`] deliberately does *not* use this: it reports
 /// [`ErrorKind::RepoNotResolved`] instead, because that variant carries the list of things it
@@ -136,13 +136,13 @@ pub fn resolve_repo(
     let host_pref: Option<(String, &'static str)> = opts
         .host
         .map(|h| (h.to_owned(), "--host"))
-        .or_else(|| env.get("FJO_HOST").map(|v| (v, "$FJO_HOST")))
+        .or_else(|| env.get("FCLI_HOST").map(|v| (v, "$FCLI_HOST")))
         .or_else(|| env.get("FORGEJO_HOST").map(|v| (v, "$FORGEJO_HOST")));
 
     let login_pref: Option<String> = opts
         .login
         .map(str::to_owned)
-        .or_else(|| env.get("FJO_USER"))
+        .or_else(|| env.get("FCLI_USER"))
         .or_else(|| env.get("FORGEJO_USER"));
 
     // ---------------------------------------------------------------- 1. -R/--repo
@@ -169,8 +169,8 @@ pub fn resolve_repo(
     }
     tried.push(Attempt::new("-R/--repo", "not given"));
 
-    // ------------------------------------------------------- 2. $FJO_REPO, $FORGEJO_REPO
-    for (var, label) in [("FJO_REPO", "$FJO_REPO"), ("FORGEJO_REPO", "$FORGEJO_REPO")] {
+    // ------------------------------------------------------- 2. $FCLI_REPO, $FORGEJO_REPO
+    for (var, label) in [("FCLI_REPO", "$FCLI_REPO"), ("FORGEJO_REPO", "$FORGEJO_REPO")] {
         let Some(value) = env.get(var) else {
             tried.push(Attempt::new(label, "not set"));
             continue;
@@ -182,7 +182,7 @@ pub fn resolve_repo(
             Some(h) => HostKey::parse(h)?,
             None => host_from_pref(hosts, &host_pref, env)?,
         };
-        let var: &'static str = if var == "FJO_REPO" { "FJO_REPO" } else { "FORGEJO_REPO" };
+        let var: &'static str = if var == "FCLI_REPO" { "FCLI_REPO" } else { "FORGEJO_REPO" };
         return finish(hosts, host, login_pref.as_deref(), r.slug, RepoSource::Env { var });
     }
 
@@ -203,7 +203,7 @@ pub fn resolve_repo(
         remote_score(&b.name).cmp(&remote_score(&a.name)).then_with(|| a.name.cmp(&b.name))
     });
 
-    // ------------------------------------------- 4. remote.<name>.fjo-resolved
+    // ------------------------------------------- 4. remote.<name>.fcli-resolved
     let configured = git.config_get_regexp(&format!(r"^remote\..*\.{RESOLVED_SUFFIX}$"))?;
     for remote in &ordered {
         let key = resolved_key(&remote.name);
@@ -216,10 +216,10 @@ pub fn resolve_repo(
             // The user explicitly said "none of these remotes". Stop, rather than falling
             // through to scoring and re-asking the question they already answered.
             tried.push(Attempt::new(
-                "git config fjo-resolved",
+                "git config fcli-resolved",
                 format!(
                     "{key} is {RESOLVED_NONE}: you opted out for this remote. Pass \
-                     -R owner/name, or run `fjo repo set-default` to choose one"
+                     -R owner/name, or run `fcli repo set-default` to choose one"
                 ),
             ));
             return Err(Error::new(ErrorKind::RepoNotResolved { tried }));
@@ -256,7 +256,7 @@ pub fn resolve_repo(
                 }));
             }
             tried.push(Attempt::new(
-                "git config fjo-resolved",
+                "git config fcli-resolved",
                 format!(
                     "{key} is `{RESOLVED_BASE}`, but {}'s URL is not a repository URL",
                     remote.name
@@ -286,7 +286,7 @@ pub fn resolve_repo(
             RepoSource::GitConfig { remote: remote.name.clone(), value: value.to_owned() },
         );
     }
-    tried.push(Attempt::new("git config fjo-resolved", "not set on any remote"));
+    tried.push(Attempt::new("git config fcli-resolved", "not set on any remote"));
 
     // ------------------------------------------------------ 5. and 6. remote-name scoring
     let keys = hosts.keys();
@@ -338,7 +338,7 @@ pub fn resolve_repo(
 
     if at_top.len() > 1 {
         // Two equally-plausible remotes. Guessing would silently operate on the wrong
-        // repository, so name them all and let `fjo repo set-default` settle it.
+        // repository, so name them all and let `fcli repo set-default` settle it.
         return Err(Error::new(ErrorKind::AmbiguousRemote {
             candidates: at_top
                 .iter()
@@ -431,7 +431,7 @@ mod tests {
     fn fork_checkout_defaults_to_upstream() {
         // The scoring rule's whole purpose: in a fork, a pull request belongs to the
         // upstream project, not to the contributor's own copy. Getting this backwards means
-        // every `fjo pr create` opens a PR against the fork.
+        // every `fcli pr create` opens a PR against the fork.
         let git = FakeGit::repo()
             .with_remote("origin", "https://git.example.org/me/fork.git")
             .with_remote("upstream", "https://git.example.org/them/proj.git");
@@ -471,7 +471,7 @@ mod tests {
     }
 
     #[test]
-    fn fjo_resolved_base_uses_that_remotes_url() {
+    fn fcli_resolved_base_uses_that_remotes_url() {
         let git = FakeGit::repo()
             .with_remote("origin", "https://git.example.org/me/fork.git")
             .with_remote("upstream", "https://git.example.org/them/proj.git")
@@ -487,7 +487,7 @@ mod tests {
     }
 
     #[test]
-    fn fjo_resolved_owner_name_bypasses_url_parsing() {
+    fn fcli_resolved_owner_name_bypasses_url_parsing() {
         // The escape hatch for an SSH alias: the remote URL is unparseable, and set-default
         // still works because it never looks at the URL.
         let git = FakeGit::repo()
@@ -500,7 +500,7 @@ mod tests {
     }
 
     #[test]
-    fn fjo_resolved_host_owner_name_picks_the_host() {
+    fn fcli_resolved_host_owner_name_picks_the_host() {
         let git = FakeGit::repo()
             .with_remote("origin", "git@work-forge:whatever/thing.git")
             .with_config(&resolved_key("origin"), "codeberg.org/them/proj");
@@ -511,7 +511,7 @@ mod tests {
     }
 
     #[test]
-    fn fjo_resolved_none_stops_instead_of_prompting_forever() {
+    fn fcli_resolved_none_stops_instead_of_prompting_forever() {
         let git = FakeGit::repo()
             .with_remote("origin", "https://git.example.org/me/proj.git")
             .with_config(&resolved_key("origin"), RESOLVED_NONE);
@@ -537,7 +537,7 @@ mod tests {
         match &*err.kind {
             ErrorKind::RepoNotResolved { tried } => {
                 let what: Vec<&str> = tried.iter().map(|a| a.what).collect();
-                assert_eq!(what, ["-R/--repo", "$FJO_REPO", "$FORGEJO_REPO", "git work tree"]);
+                assert_eq!(what, ["-R/--repo", "$FCLI_REPO", "$FORGEJO_REPO", "git work tree"]);
             }
             other => panic!("wrong kind: {other:?}"),
         }
@@ -653,11 +653,11 @@ mod tests {
         let hosts = hosts_with(&["git.example.org", "codeberg.org"]);
         let git = FakeGit::repo().with_remote("origin", "https://git.example.org/me/proj.git");
 
-        // FJO_REPO beats FORGEJO_REPO...
-        let env = MapEnv::new().with("FJO_REPO", "a/one").with("FORGEJO_REPO", "b/two");
+        // FCLI_REPO beats FORGEJO_REPO...
+        let env = MapEnv::new().with("FCLI_REPO", "a/one").with("FORGEJO_REPO", "b/two");
         let ctx = resolve(&git, &hosts, &env, ResolveOptions::default()).unwrap();
         assert_eq!(ctx.slug.to_string(), "a/one");
-        assert_eq!(ctx.source, RepoSource::Env { var: "FJO_REPO" });
+        assert_eq!(ctx.source, RepoSource::Env { var: "FCLI_REPO" });
 
         // ...and both beat the git remote.
         let env = MapEnv::new().with("FORGEJO_REPO", "codeberg.org/b/two");
@@ -666,9 +666,9 @@ mod tests {
         assert_eq!(ctx.slug.to_string(), "b/two");
 
         // A malformed value is a usage error naming the variable, not a silent fallthrough.
-        let env = MapEnv::new().with("FJO_REPO", "justaname");
+        let env = MapEnv::new().with("FCLI_REPO", "justaname");
         match &*resolve(&git, &hosts, &env, ResolveOptions::default()).unwrap_err().kind {
-            ErrorKind::Usage(m) => assert!(m.contains("FJO_REPO"), "{m}"),
+            ErrorKind::Usage(m) => assert!(m.contains("FCLI_REPO"), "{m}"),
             other => panic!("wrong kind: {other:?}"),
         }
     }

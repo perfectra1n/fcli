@@ -346,7 +346,7 @@ mod tests {
         }
     }
 
-    /// `fjo status` fans out into four concurrent [`crate::http::paginate`] walks, and each one
+    /// `fcli status` fans out into four concurrent [`crate::http::paginate`] walks, and each one
     /// asks for capabilities before its first request. Without a single-flight gate all four
     /// miss the cold cache and all four probe, spending eight requests on what two answer — a
     /// cost that grows with every command that learns to overlap its reads.

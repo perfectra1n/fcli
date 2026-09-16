@@ -1,0 +1,11 @@
+---
+source: crates/fcli/src/cmd/workflow.rs
+expression: report
+---
+== human/tty
+NAME  FILE    DISPATCH  RUNS-ON  EVENTS                   JOBS
+CI    ci.yml  yes       docker   push, workflow_dispatch  build
+== human/piped
+CI	ci.yml	yes	docker	push, workflow_dispatch	build
+== json/piped
+[{"path":".forgejo/workflows/ci.yml","dispatch":true,"runs_on":["docker"]}]

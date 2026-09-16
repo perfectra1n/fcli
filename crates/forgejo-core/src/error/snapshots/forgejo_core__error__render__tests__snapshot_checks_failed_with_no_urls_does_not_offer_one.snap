@@ -11,6 +11,6 @@ what to do:
   inspect the failed checks listed above.
   1. no URL was published; check the logs in the service that runs these
      checks
-  2. fjo pr checks 4212 --web  (the same checks in a browser)
+  2. fcli pr checks 4212 --web  (the same checks in a browser)
   note: checks may come from external services. For Forgejo Actions, use
-        fjo run list.
+        fcli run list.

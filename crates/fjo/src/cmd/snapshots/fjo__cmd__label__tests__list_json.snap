@@ -1,5 +1,0 @@
----
-source: crates/fjo/src/cmd/label.rs
-expression: text(&buf)
----
-[{"name":"bug","color":"e11d21"},{"name":"ci","color":"1d76db"}]

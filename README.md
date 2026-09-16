@@ -1,47 +1,47 @@
-# fjo
+# fcli
 
 A command-line interface for [Forgejo](https://forgejo.org), with commands similar to `gh`.
 
-Use `fjo pr`, `fjo issue`, and `fjo repo` for common tasks. For other API operations,
-use `fjo raw` or `fjo api`. The generated `raw` commands cover all 506 operations in the
+Use `fcli pr`, `fcli issue`, and `fcli repo` for common tasks. For other API operations,
+use `fcli raw` or `fcli api`. The generated `raw` commands cover all 506 operations in the
 bundled Forgejo 16.0.4 API specification. Tests check that each operation has a command;
 this does not mean every operation has been tested against a server.
 
 ## Install
 
 ```bash
-cargo install --git https://github.com/perfectra1n/fjo --locked fjo
+cargo install --git https://github.com/perfectra1n/fcli --locked fcli
 ```
 
-Requires Rust 1.95 or newer. The trailing `fjo` names the package to install: the
+Requires Rust 1.95 or newer. The trailing `fcli` names the package to install: the
 workspace root is a virtual manifest, so cargo needs to be told which one. `--locked`
 builds against the committed `Cargo.lock` rather than re-resolving.
 
 Prebuilt binaries for Linux, macOS, and Windows are attached to each
-[release](https://github.com/perfectra1n/fjo/releases), with shell completions included.
+[release](https://github.com/perfectra1n/fcli/releases), with shell completions included.
 
 Then log in to your Forgejo server:
 
 ```bash
-fjo auth login --host git.example.org
+fcli auth login --host git.example.org
 ```
 
 Run the commands below from a repository checkout, or pass `-R owner/repo` to select a
 repository.
 
 ```bash
-fjo pr list
-fjo pr create --fill                     # use the branch's commits for the title and body
-fjo issue list --label bug --state all -L 50
-fjo release create v0.1.0 ./dist/*        # create a release and upload its assets
-fjo run watch 1234 --exit-status         # wait for an Actions run to finish
+fcli pr list
+fcli pr create --fill                     # use the branch's commits for the title and body
+fcli issue list --label bug --state all -L 50
+fcli release create v0.1.0 ./dist/*        # create a release and upload its assets
+fcli run watch 1234 --exit-status         # wait for an Actions run to finish
 ```
 
-Use `fjo --help` to list command groups, or add `--help` to any command.
+Use `fcli --help` to list command groups, or add `--help` to any command.
 
 ## Status
 
-`fjo` is under active development. Test coverage varies by command.
+`fcli` is under active development. Test coverage varies by command.
 
 The Docker integration suite tests against Forgejo 16.0.4. It covers authentication,
 configuration, aliases, completions, status, selected admin operations, and parts of the
@@ -53,36 +53,36 @@ formatting, but cannot confirm server behavior. Actions runner operations, strea
 non-JSON responses, retry behavior, and token redaction are not covered by the Docker suite.
 
 The integration tests run through `mise run itest`; the normal test task excludes them.
-See [`crates/fjo-itest/tests/`](crates/fjo-itest/tests/) for the cases covered.
+See [`crates/fcli-itest/tests/`](crates/fcli-itest/tests/) for the cases covered.
 
-One known limitation: permission advice for `fjo api` infers the required token scope from
+One known limitation: permission advice for `fcli api` infers the required token scope from
 the URL. It can differ from the scope recorded for the equivalent generated command.
 
 ## API access
 
 ### Common commands
 
-Commands such as `fjo pr`, `fjo repo`, and `fjo issue` infer repository context,
+Commands such as `fcli pr`, `fcli repo`, and `fcli issue` infer repository context,
 prompt for missing values, and format results as tables. Some combine several API requests.
 These hand-written commands are called *porcelain* in the contributor documentation.
 
-### Generated commands: `fjo raw`
+### Generated commands: `fcli raw`
 
-`fjo raw` provides typed flags for every operation in the bundled API specification.
+`fcli raw` provides typed flags for every operation in the bundled API specification.
 Each command's help shows its HTTP method and path. Path parameters can be positional
 arguments or flags.
 
 ```bash
-fjo raw --help
-fjo raw search pull request
-fjo raw repo list-git-hooks myorg myrepo
-fjo raw repo get-contents myorg myrepo src/main.rs
+fcli raw --help
+fcli raw search pull request
+fcli raw repo list-git-hooks myorg myrepo
+fcli raw repo get-contents myorg myrepo src/main.rs
 ```
 
 Use `--dry-run` to inspect a request without sending it:
 
 ```console
-$ fjo raw repo create-pull-request myorg myrepo \
+$ fcli raw repo create-pull-request myorg myrepo \
     --title "Fix typo" --head fix --base main --dry-run
 POST /repos/myorg/myrepo/pulls
 content-type: application/json
@@ -96,17 +96,17 @@ content-type: application/json
 `--body-file -` reads a JSON body from stdin. Individual field flags override values in that
 body. If an operation has its own `--repo` parameter, use `-R` for the global repository option.
 
-### Direct requests: `fjo api`
+### Direct requests: `fcli api`
 
-Use `fjo api` for a specific path under `/api/v1`, including endpoints newer than the
+Use `fcli api` for a specific path under `/api/v1`, including endpoints newer than the
 bundled specification. `{owner}`, `{repo}`, and `{branch}` use the resolved repository context.
 
 ```bash
-fjo api version
-fjo api user --jq .login
-fjo api 'repos/{owner}/{repo}/pulls' --paginate --jq '.[].number'
-fjo api -X POST -f title=hi 'repos/{owner}/{repo}/issues'
-fjo api -i repos/myorg/myrepo             # include the status line and headers
+fcli api version
+fcli api user --jq .login
+fcli api 'repos/{owner}/{repo}/pulls' --paginate --jq '.[].number'
+fcli api -X POST -f title=hi 'repos/{owner}/{repo}/issues'
+fcli api -i repos/myorg/myrepo             # include the status line and headers
 ```
 
 `-f` sends string values. `-F` accepts JSON types or reads a file when the value starts
@@ -118,12 +118,12 @@ Tables use aligned columns in a terminal and tab-separated values when piped. Pi
 have no headers or padding and preserve empty cells. Progress and warnings go to stderr.
 
 ```bash
-fjo pr list
-fjo pr list | cut -f2
-fjo pr list --json number,title,head_branch
-fjo pr list --json number --jq '.[].number'
-fjo pr list --json                       # list available fields without a network request
-fjo pr list --json number,title,updated_at \
+fcli pr list
+fcli pr list | cut -f2
+fcli pr list --json number,title,head_branch
+fcli pr list --json number --jq '.[].number'
+fcli pr list --json                       # list available fields without a network request
+fcli pr list --json number,title,updated_at \
   --template '{{range .}}{{tablerow .number .title (timeago .updated_at)}}{{end}}'
 ```
 
@@ -135,7 +135,7 @@ See [Output](docs/output.md) for formatting rules, pagination, and exit codes.
 
 ## Differences from `gh`
 
-| Option | `fjo` behavior |
+| Option | `fcli` behavior |
 | --- | --- |
 | `--json` fields | API names such as `head_branch`, not `headRefName` |
 | `--json` without fields | Lists available fields on stdout and exits successfully, without a request |
@@ -152,40 +152,40 @@ See [Differences from gh](docs/gh-differences.md) for details.
 You can configure multiple servers and multiple accounts per server:
 
 ```bash
-fjo auth login --host codeberg.org
-fjo auth login --host git.example.org
-fjo auth status
-fjo auth switch --host codeberg.org
-fjo pr list --host git.example.org
+fcli auth login --host codeberg.org
+fcli auth login --host git.example.org
+fcli auth status
+fcli auth switch --host codeberg.org
+fcli pr list --host git.example.org
 ```
 
 Tokens are stored in the OS keyring when available. Without a keyring, use `FORGEJO_TOKEN`
 or explicitly choose file storage. Token files use `0600` permissions.
 
-`fjo auth setup-git` registers a Git credential helper so Git can use your saved token.
+`fcli auth setup-git` registers a Git credential helper so Git can use your saved token.
 The helper ignores Git's credential-removal requests, so a rejected push does not remove
-your `fjo` login.
+your `fcli` login.
 
 ## Forgejo features
 
 ```bash
-fjo pr create --agit --topic fix-typo
-fjo times add 42 1h25m
-fjo stopwatch start 42
-fjo wiki list
-fjo quota status
-fjo quota rules create small --bytes 1GiB --subject size:all
-fjo mirror add https://github.com/example/repo --interval 8h
-fjo package list myorg --type cargo
-fjo transfer start newowner
-fjo admin user list
+fcli pr create --agit --topic fix-typo
+fcli times add 42 1h25m
+fcli stopwatch start 42
+fcli wiki list
+fcli quota status
+fcli quota rules create small --bytes 1GiB --subject size:all
+fcli mirror add https://github.com/example/repo --interval 8h
+fcli package list myorg --type cargo
+fcli transfer start newowner
+fcli admin user list
 ```
 
 AGit creates a pull request by pushing to `refs/for/<branch>/<topic>`, without a fork or
 new branch. Push the same topic to update the request. Use `--force-push` after rewriting
 the commits.
 
-Repository Git hooks are available through `fjo git-hook list`, `view`, `edit`, and `disable`.
+Repository Git hooks are available through `fcli git-hook list`, `view`, `edit`, and `disable`.
 Disabling a hook clears its script; it does not remove the hook from Forgejo's fixed set.
 
 ## Errors
@@ -193,13 +193,13 @@ Disabling a hook clears its script; it does not remove the hook from Forgejo's f
 Errors include a description, relevant details, and suggested commands. Server error messages
 are preserved, with secrets redacted.
 
-For repository-related 404 responses, `fjo` checks whether the repository is accessible
+For repository-related 404 responses, `fcli` checks whether the repository is accessible
 before reporting a missing resource. If the repository itself is inaccessible, the error
 lists possible causes rather than assuming it was deleted.
 
 ## Limitations
 
-- SSH `Host` aliases from `~/.ssh/config` are not resolved. Use `fjo repo set-default` to
+- SSH `Host` aliases from `~/.ssh/config` are not resolved. Use `fcli repo set-default` to
   select the repository instead.
 - No third-party extension commands or TUI.
 - No translated messages.
@@ -244,10 +244,10 @@ lower its budget in the same change. See [Ratchets](docs/ratchets.md).
 | `forgejo-core` | HTTP, authentication, pagination, errors, configuration, and Git context |
 | `forgejo-model` | Generated API types and deserializers |
 | `forgejo-client` | Generated client methods and metadata |
-| `fjo-raw` | Generated-command CLI built from metadata |
-| `fjo` | CLI commands and output formatting |
+| `fcli-raw` | Generated-command CLI built from metadata |
+| `fcli` | CLI commands and output formatting |
 | `xtask` | Code generation and development tasks |
-| `fjo-itest` | Integration tests against Forgejo |
+| `fcli-itest` | Integration tests against Forgejo |
 
 `forgejo-core`, `forgejo-model`, and `forgejo-client` can also be used as a Rust SDK.
 

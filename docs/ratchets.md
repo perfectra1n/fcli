@@ -82,7 +82,7 @@ check**, so the list cannot outlive the work.
 
 Counts `unwrap()`, `expect(`, `panic!`, `todo!` and `unimplemented!` outside
 `generated/`, outside `tests/`, outside `#[cfg(test)]`, and outside the
-`fjo-itest` crate — which is `publish = false` and is, by its own doc comment,
+`fcli-itest` crate — which is `publish = false` and is, by its own doc comment,
 "Harness for tests that run against a real Forgejo". An unwrap there fails a test
 loudly, which is the behaviour you want. That carve-out is named explicitly in
 `.mise/scan.py` (`TEST_CRATES`) rather than being a silent skip, and only this
@@ -93,7 +93,7 @@ test double: it lives in a published crate and is compiled into shipping builds,
 so its seven `expect(`s really are in the artifact. Feature-gating it is a real
 drain for this ratchet.
 
-`fjo`'s entire value proposition is its error taxonomy: one renderer, a three-part
+`fcli`'s entire value proposition is its error taxonomy: one renderer, a three-part
 shape (what failed / why / what to do), and a test asserting that **every**
 `ErrorKind` variant's rendering contains a "what to do" section with a literal
 runnable command. A panic bypasses all of it and hands the user a Rust backtrace —
@@ -111,7 +111,7 @@ at runtime.
 
 ### `exit-check` — `std::process::exit` outside `main.rs`
 
-Counts calls anywhere but `crates/fjo/src/main.rs`. **Currently at zero**, so
+Counts calls anywhere but `crates/fcli/src/main.rs`. **Currently at zero**, so
 this is a "stays drained" gate.
 
 `main.rs` owns the process exit code because the `ErrorKind` exit-code table is a
@@ -122,14 +122,14 @@ code a calling script observes stops being the one the taxonomy documents. It al
 never unwinds, so it skips the pager flush and the grouped unknown-field note on
 the way out.
 
-It reached zero the hard way. `crates/fjo/src/cmd/pr/checks.rs`
+It reached zero the hard way. `crates/fcli/src/cmd/pr/checks.rs`
 (`Verdict::Failed`) was the last such call — its own doc comment flagged it as the
 one thing not yet on the taxonomy — and it is now an `ErrorKind`, so the exit code
 for a failed check run is decided in the same table as every other exit code.
 
 ### `support-check` — non-admin modules reaching into `cmd/admin/support`
 
-Counts files outside `crates/fjo/src/cmd/admin/` that import
+Counts files outside `crates/fcli/src/cmd/admin/` that import
 `crate::cmd::admin::support`. **Currently at zero**, so this is a "stays drained"
 gate.
 
@@ -146,7 +146,7 @@ colliding, and the nearest already-existing home won. Eleven modules ended up
 reaching in — `topic`, `block`, `transfer`, `webhook`, `deploy_key`, `reaction`
 among them.
 
-The plumbing now lives at `crates/fjo/src/cmd/support/` where it belongs, and the
+The plumbing now lives at `crates/fcli/src/cmd/support/` where it belongs, and the
 count is zero. The gate stays because the cause will recur: the next time a shared
 file is contended, the nearest already-existing home will look attractive again,
 and this is what says no.
@@ -165,7 +165,7 @@ was a full overwrite that blanked whatever the user had not mentioned. A call
 site that writes `Some(x.unwrap_or_default())` hands the model the exact zero
 value the `Option` existed to omit, and the overwrite comes straight back.
 
-The live symptom was `fjo repo fork` answering `500 name is empty`, because the
+The live symptom was `fcli repo fork` answering `500 name is empty`, because the
 call site turned "no `--fork-name`" into `Some("")`. It was 14 files and roughly
 40 call sites.
 
@@ -291,12 +291,12 @@ Three numbers, all measuring the same design decision.
 
 Layer 2 binds ~506 operations through clap's **builder** API over a `const` table,
 constructing each subtree lazily, precisely because clap's derive path would build
-all ~3,000 args on every invocation — including `fjo --version`, which needs none
+all ~3,000 args on every invocation — including `fcli --version`, which needs none
 of them. That decision is invisible in the source: nothing stops someone
 reintroducing an eager build, and nothing would fail except the clock.
 
-* `fjo --version` — the no-subtree case.
-* `fjo raw repo create-pull-request --help` — the one-subtree case. Comparing the
+* `fcli --version` — the no-subtree case.
+* `fcli raw repo create-pull-request --help` — the one-subtree case. Comparing the
   two separates "startup got slower" from "subtree construction got slower".
 * stripped release binary size — the third face of the same decision: ~61k
   generated lines with zero type generics and no macros-with-logic, so nothing
@@ -324,12 +324,12 @@ problem.** Attributing `.text` by symbol on an unstripped build:
 | --- | --- |
 | `forgejo_client` — 53k generated lines, 506 operations | 89,856 |
 | `forgejo_model` — 8k generated lines, 233 structs | 153,332 |
-| `fjo::cmd::*` — hand-written porcelain bodies | 1,130,648 |
+| `fcli::cmd::*` — hand-written porcelain bodies | 1,130,648 |
 | clap **derive** glue for that porcelain (`augment_subcommands` et al) | 1,054,228 |
 
 Layer 2 binds 506 operations for under 90 KB. Layer 3 binds 238 through clap's
 derive macro and spends more than a megabyte on the generated `augment_*`
-functions alone — a single one, `<fjo::cmd::Porcelain as Subcommand>::augment_subcommands`,
+functions alone — a single one, `<fcli::cmd::Porcelain as Subcommand>::augment_subcommands`,
 is 135,644 bytes. The "zero generics, zero macros-with-logic" rule held exactly
 where it was written down: the 17 `impl<...>` blocks in the generated client are
 lifetime-only and do not monomorphise, and there are no `macro_rules!` under
@@ -365,7 +365,7 @@ symbol before believing any story about the cause.
 ## Implementation notes
 
 `.mise/scan.py` is the scanner behind `panic-check`, `exit-check`,
-`support-check` and `zero-check`. It is the `fjo` analogue of kopiur's `crates/xtask/src/scan.rs`
+`support-check` and `zero-check`. It is the `fcli` analogue of kopiur's `crates/xtask/src/scan.rs`
 and makes the same trade deliberately: it reads `.rs` files as **text** and never
 parses Rust. A parser is a dependency, a build-time cost, and a new way for a gate
 to fail on valid source. Text scanning can only be conservative, which is the

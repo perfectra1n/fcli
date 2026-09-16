@@ -87,7 +87,7 @@ fn every_op_is_findable_by_its_own_group_and_command() {
         assert_eq!(
             found.map(|o| o.op_id),
             Some(op.op_id),
-            "lookup::op could not find `fjo raw {} {}`",
+            "lookup::op could not find `fcli raw {} {}`",
             op.group,
             op.command
         );
@@ -103,7 +103,7 @@ fn groups_are_sorted_by_name() {
         assert_eq!(lookup::group(GROUPS, g.name).map(|x| x.name), Some(g.name));
     }
 }
-/// A wrong `first`/`len` puts another group's operations under `fjo raw <group>`, with
+/// A wrong `first`/`len` puts another group's operations under `fcli raw <group>`, with
 /// no error anywhere — the clap tree is simply built from the wrong slice.
 #[test]
 fn group_indices_slice_ops_exactly_and_cover_all_of_it() {

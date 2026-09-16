@@ -1,6 +1,6 @@
 # Output
 
-`fjo` copies `gh`'s output contract deliberately, because that contract is what makes a CLI
+`fcli` copies `gh`'s output contract deliberately, because that contract is what makes a CLI
 scriptable and because a great many people already have it in their fingers. This document
 records the contract, and — more importantly — the three places we **deliberately differ**, so
 those differences do not later look like bugs. Divergences that are about *flags* rather than
@@ -27,18 +27,18 @@ nulls: `number` was projected away before jq ran. That is surprising exactly onc
 | Colour | on unless disabled | off unless forced |
 | Pager | used | never |
 
-The piped form is a stable interface. `fjo pr list | cut -f2` works, and empty cells stay
+The piped form is a stable interface. `fcli pr list | cut -f2` works, and empty cells stay
 empty rather than collapsing, so column positions never shift.
 
 Environment:
 
 - `NO_COLOR` (any non-empty value) or `CLICOLOR=0` disables colour.
 - `CLICOLOR_FORCE` (set and not `0`) forces it even when piped.
-- `FJO_FORCE_TTY`: an integer is an absolute width; a value ending in `%` is a percentage of
+- `FCLI_FORCE_TTY`: an integer is an absolute width; a value ending in `%` is a percentage of
   the real width; any other non-empty value forces terminal behaviour with no width override.
-- `FJO_PAGER` → `PAGER` → `fjo config get pager`. Skipped when not a terminal, when empty,
+- `FCLI_PAGER` → `PAGER` → `fcli config get pager`. Skipped when not a terminal, when empty,
   or when the command is literally `cat`. `LESS=FRX` is injected if unset.
-- `FJO_NO_COMPAT_NOTES=1` silences the "your server sent a value this build does not know"
+- `FCLI_NO_COMPAT_NOTES=1` silences the "your server sent a value this build does not know"
   note.
 
 ## Divergence 1: field names are snake_case
@@ -55,9 +55,9 @@ Two concrete payoffs:
 
 1. **One expression works at every layer.** These are the same filter, and all three work:
    ```bash
-   fjo api repos/{owner}/{repo}/pulls --jq '.[].head.ref'
-   fjo raw repo list-pull-requests o r --jq '.[].head.ref'
-   fjo pr list --json head --jq '.[].head.ref'
+   fcli api repos/{owner}/{repo}/pulls --jq '.[].head.ref'
+   fcli raw repo list-pull-requests o r --jq '.[].head.ref'
+   fcli pr list --json head --jq '.[].head.ref'
    ```
    Under camelCase, layer 1 passes the API through untouched (`head_repo`) while the other two
    would say `headRepo` — a permanent trap.
@@ -71,13 +71,13 @@ translation means zero of those bugs.
 There is deliberately **no `--json-case` flag**. If you need camelCase:
 
 ```bash
-fjo pr list --json number,head_branch \
+fcli pr list --json number,head_branch \
   --jq 'map(with_entries(.key |= (split("_") | .[0] + (.[1:] | map(. | ascii_upcase[0:1] + .[1:]) | join(""))))) '
 ```
 
 ## Divergence 2: bare `--json` prints to stdout and exits 0
 
-`gh pr list --json` prints the valid field names to **stderr** and exits **1**. `fjo` prints
+`gh pr list --json` prints the valid field names to **stderr** and exits **1**. `fcli` prints
 them to **stdout** and exits **0**.
 
 The reasoning: the user asked what fields exist and received a correct, complete answer. That
@@ -85,8 +85,8 @@ is success, not failure. Treating it as an error makes the most natural discover
 impossible:
 
 ```bash
-fjo pr list --json | fzf --multi | paste -sd,     # pick fields interactively
-fjo pr list --json | grep -i url                  # what URL fields are there?
+fcli pr list --json | fzf --multi | paste -sd,     # pick fields interactively
+fcli pr list --json | grep -i url                  # what URL fields are there?
 ```
 
 On a terminal the listing gains aligned type and description columns; piped, it is bare names,
@@ -111,11 +111,11 @@ Go `text/template` syntax, with `gh`'s helper functions: `tablerow`, `tablerende
 `timefmt`, `truncate`, `color`, `autocolor`, `join`, `pluck`, `hyperlink`.
 
 ```bash
-fjo pr list --json number,title,head_branch,updated_at --template \
+fcli pr list --json number,title,head_branch,updated_at --template \
   '{{range .}}{{tablerow (printf "#%v" .number | autocolor "green") .title .head_branch (timeago .updated_at)}}{{end}}'
 ```
 
-`tablerender` flushes the buffered rows. **If you forget it, `fjo` flushes automatically at
+`tablerender` flushes the buffered rows. **If you forget it, `fcli` flushes automatically at
 the end of the template** — that omission is the single most common template mistake, and `gh`
 auto-flushes for the same reason.
 
@@ -140,9 +140,9 @@ across all pages; `--slurp` (layer 1 only) wraps every page in one JSON array in
 each page's array in turn.
 
 ```bash
-fjo api 'repos/{owner}/{repo}/issues' --paginate --jq '.[].number'
-fjo api 'repos/{owner}/{repo}/issues' --paginate --slurp --jq 'length'
-fjo issue list --limit 500
+fcli api 'repos/{owner}/{repo}/issues' --paginate --jq '.[].number'
+fcli api 'repos/{owner}/{repo}/issues' --paginate --slurp --jq 'length'
+fcli issue list --limit 500
 ```
 
 Forgejo's specification declares **no `Link` header anywhere**, which is the mechanism the live
@@ -189,9 +189,9 @@ million items, that is what `--limit` is for, and the error says so.
 | 8 | rate limited |
 | 130 | interrupted |
 
-0–4 match `gh`. An empty list is success: `fjo pr list --json number` on a repository with no
-open pull requests prints `[]` and exits 0, so `if fjo pr list ...` tests reachability rather
+0–4 match `gh`. An empty list is success: `fcli pr list --json number` on a repository with no
+open pull requests prints `[]` and exits 0, so `if fcli pr list ...` tests reachability rather
 than emptiness.
 
-`SIGPIPE` is restored to its default disposition at startup, so `fjo pr list | head -1` exits
+`SIGPIPE` is restored to its default disposition at startup, so `fcli pr list | head -1` exits
 0 silently instead of panicking with "failed printing to stdout".

@@ -1,13 +1,13 @@
 ---
 source: crates/forgejo-core/src/error/render.rs
-expression: "snap(ErrorKind::AmbiguousRemote\n{\n    candidates:\n    vec![RemoteCandidate\n    {\n        remote: \"fork\".into(), host: \"git.example.org\".into(), slug:\n        \"me/fjo\".into(),\n    }, RemoteCandidate\n    {\n        remote: \"mirror\".into(), host: \"codeberg.org\".into(), slug:\n        \"perf3ct/fjo\".into(),\n    },],\n}, RequestCtx::default())"
+expression: "snap(ErrorKind::AmbiguousRemote\n{\n    candidates:\n    vec![RemoteCandidate\n    {\n        remote: \"fork\".into(), host: \"git.example.org\".into(), slug:\n        \"me/fcli\".into(),\n    }, RemoteCandidate\n    {\n        remote: \"mirror\".into(), host: \"codeberg.org\".into(), slug:\n        \"perf3ct/fcli\".into(),\n    },],\n}, RequestCtx::default())"
 ---
 error: multiple Git remotes match; select a repository
 
-  remotes: fork → git.example.org/me/fjo
-           mirror → codeberg.org/perf3ct/fjo
+  remotes: fork → git.example.org/me/fcli
+           mirror → codeberg.org/perf3ct/fcli
 
 what to do:
   choose which remote repository to use.
-  1. fjo repo set-default  (save the choice in Git config)
-  2. fjo <command> -R owner/name  (choose for one command)
+  1. fcli repo set-default  (save the choice in Git config)
+  2. fcli <command> -R owner/name  (choose for one command)

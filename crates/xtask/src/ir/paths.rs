@@ -118,7 +118,7 @@ mod tests {
     }
 
     /// Named after the path, because it is one of exactly two in the spec that break a naive
-    /// renderer. `fjo raw repo download-pull-diff-or-patch o r 1 diff` must produce
+    /// renderer. `fcli raw repo download-pull-diff-or-patch o r 1 diff` must produce
     /// `/pulls/1.diff`, not `/pulls/1%2Ediff` and not `/pulls/1.{diffType}`.
     #[test]
     fn repos_owner_repo_pulls_index_dot_difftype() {

@@ -376,7 +376,7 @@ mod tests {
         );
     }
 
-    /// Bug this prevents: `fjo repo clone o/r -- --depth 1` dropping the passthrough
+    /// Bug this prevents: `fcli repo clone o/r -- --depth 1` dropping the passthrough
     /// arguments, or putting them before the URL where git reads `--depth` as the repository.
     #[test]
     fn extra_clone_arguments_come_last() {

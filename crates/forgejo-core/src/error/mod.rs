@@ -318,7 +318,7 @@ pub enum ErrorKind {
         /// `false` when the probe was turned off (`Client::probe_404(false)`, which bulk loops
         /// do) or when the probe itself failed, so the repository's existence is simply unknown.
         /// Collapsing the two used to make a never-checked 404 report "could not find the
-        /// repository perf3ct/fjo" on no evidence — and once `server_message` was added, that
+        /// repository perf3ct/fcli" on no evidence — and once `server_message` was added, that
         /// headline could sit directly above a server sentence contradicting it.
         probed: bool,
         /// What the server said, when it said anything beyond "not found".
@@ -407,7 +407,7 @@ pub enum ErrorKind {
     /// The counterpart to [`ErrorKind::ChecksPending`], and deliberately a separate variant from
     /// [`ErrorKind::RunFailed`]: a *status check* is not necessarily an Actions run. Anything
     /// holding a token can post one through the commit-status API, so advice pointing at
-    /// `fjo run view <run>` is wrong for every check that came from external CI, and there is no
+    /// `fcli run view <run>` is wrong for every check that came from external CI, and there is no
     /// run id to point at in the first place. What every check does have is its own URL, which is
     /// why [`FailedCheck`] carries that and nothing else.
     ///
@@ -424,7 +424,7 @@ pub enum ErrorKind {
     /// An Actions run finished, unsuccessfully.
     RunFailed {
         slug: Option<String>,
-        /// The run id as the user would pass it back to `fjo run view`.
+        /// The run id as the user would pass it back to `fcli run view`.
         run: String,
         /// The run's own word for how it ended: `failure`, `cancelled`, `timed_out`.
         conclusion: String,
@@ -494,7 +494,7 @@ pub enum ErrorKind {
     ///
     /// Deliberately separate from [`ErrorKind::ResourceNotFound`], which is an API 404. The two
     /// read almost identically and have nothing else in common: one is fixed with `ls`, the
-    /// other with `fjo pr list`, and a script that treats "not on the server" and "not on my
+    /// other with `fcli pr list`, and a script that treats "not on the server" and "not on my
     /// disk" as the same condition will do the wrong thing with at least one of them. They also
     /// carry different exit codes for exactly that reason.
     PathNotFound {
@@ -504,7 +504,7 @@ pub enum ErrorKind {
     },
     /// A shelled-out `git` command failed.
     ///
-    /// fjo runs the real `git` rather than linking libgit2, so that a user's `insteadOf`
+    /// fcli runs the real `git` rather than linking libgit2, so that a user's `insteadOf`
     /// rewrites, `includeIf` blocks, and credential helpers all apply. The price is that git's
     /// diagnostics arrive as a subprocess's stderr, and the same rule that governs server
     /// bodies governs them: the subprocess is the only party that knows what went wrong, so
@@ -579,7 +579,7 @@ impl ErrorKind {
     /// [`ErrorKind::GitFailed`], whose shape it shares.
     ///
     /// [`ErrorKind::ChecksFailed`] is **1, the code `gh pr checks` uses** and the code
-    /// `fjo pr checks` already produced — by calling `std::process::exit` directly, the last such
+    /// `fcli pr checks` already produced — by calling `std::process::exit` directly, the last such
     /// call in the tree, until this variant gave it somewhere to go. The number is not what is interesting here; where it comes from is. A
     /// hand-written exit is a second source of truth for the table this function *is*, and no unit
     /// test can observe it without spawning a process. It is deliberately not 8: 8 means "wait and
@@ -669,7 +669,7 @@ mod tests {
     #[test]
     fn a_local_path_miss_is_a_usage_error_not_a_404() {
         let local = ErrorKind::PathNotFound {
-            path: PathBuf::from("dist/fjo.tar.gz"),
+            path: PathBuf::from("dist/fcli.tar.gz"),
             what: "release asset",
         };
         let remote = ErrorKind::ResourceNotFound {
@@ -727,7 +727,7 @@ mod tests {
                 .into(),
         };
         let checks = ErrorKind::ChecksFailed {
-            slug: Some("perf3ct/fjo".into()),
+            slug: Some("perf3ct/fcli".into()),
             pr: "4212".into(),
             failed: vec![FailedCheck::new("build", None)],
         };

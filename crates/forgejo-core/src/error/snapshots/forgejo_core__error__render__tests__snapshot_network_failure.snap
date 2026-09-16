@@ -14,5 +14,5 @@ what to do:
   1. test the same address with curl:
      curl -sS -o /dev/null -w '%{http_code}\n' https://git.example.org:443/api/v1/version
   2. if the port is wrong, log in with the correct port (example: 3000):
-     fjo auth login --host https://git.example.org:3000
+     fcli auth login --host https://git.example.org:3000
   note: check whether a firewall or VPN is blocking the connection.

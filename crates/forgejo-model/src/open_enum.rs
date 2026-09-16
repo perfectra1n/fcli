@@ -1,6 +1,6 @@
 //! Enums that tolerate values this build has never heard of.
 //!
-//! The spec we generate from is pinned to one Forgejo release, but users point `fjo` at
+//! The spec we generate from is pinned to one Forgejo release, but users point `fcli` at
 //! whatever their instance runs. If a newer server answers with an enum value the spec did
 //! not list, a `#[derive(Deserialize)]` enum fails the whole request — the user sees a
 //! deserialization error instead of their pull request list, over a field they may not even
@@ -11,7 +11,7 @@
 //!
 //! 1. **It never hard-fails.** A future `"draft"` state becomes `Unknown("draft")`.
 //! 2. **It round-trips verbatim.** Serializing `Unknown("draft")` yields `"draft"`, so a
-//!    read-modify-write through `fjo` cannot corrupt a value it did not understand. This is
+//!    read-modify-write through `fcli` cannot corrupt a value it did not understand. This is
 //!    why `#[serde(other)]` is deliberately *not* used — that discards the original value.
 //! 3. **It is observable.** Deserializing an unknown value records a note via
 //!    [`forgejo_core::error::compat`], which the binary drains into one grouped message at
@@ -165,7 +165,7 @@ mod tests {
     #[test]
     fn a_newer_server_does_not_break_us() {
         // The bug this whole module prevents: a Forgejo release adding a state must not turn
-        // `fjo pr list` into a deserialization error.
+        // `fcli pr list` into a deserialization error.
         let v: StateType = serde_json::from_str(r#""draft""#).unwrap();
         assert_eq!(v, StateType::Unknown("draft".into()));
         assert!(!v.is_known());

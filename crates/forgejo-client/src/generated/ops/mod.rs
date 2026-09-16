@@ -4,7 +4,7 @@
 // To change this file, change the generator in crates/xtask/src/emit/ or the spec
 // in spec/, then run `cargo xtask codegen`. See CONTRIBUTING.md.
 
-//! One typed method per API operation, grouped the way `fjo` groups commands.
+//! One typed method per API operation, grouped the way `fcli` groups commands.
 //!
 //! Every method here is concrete: no type parameters, no `impl Trait` arguments.
 //! All polymorphism lives in hand-written `forgejo_core::http`. See the emitter

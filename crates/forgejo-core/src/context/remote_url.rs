@@ -22,7 +22,7 @@
 //!
 //! `~/.ssh/config` `Host` aliases are **not** resolved. `git@work-forge:o/r` yields the host
 //! `work-forge`, which matches no configured host, and the resulting
-//! [`crate::ErrorKind::RemoteHostUnknown`] says so and points at `fjo repo set-default`,
+//! [`crate::ErrorKind::RemoteHostUnknown`] says so and points at `fcli repo set-default`,
 //! which bypasses URL parsing entirely. Reading `ssh_config` properly means implementing
 //! `Match`, `Include`, and token expansion; shelling out to `ssh -G` costs a process spawn on
 //! every invocation. Neither is worth it before someone asks.
@@ -250,7 +250,7 @@ mod tests {
     }
 
     /// Every row here is a real bug: a form that a naive parser gets wrong, and that a user
-    /// then reports as "fjo says my repo is not on a configured host".
+    /// then reports as "fcli says my repo is not on a configured host".
     #[test]
     fn every_remote_url_form() {
         struct Row {

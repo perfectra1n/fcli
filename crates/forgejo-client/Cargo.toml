@@ -13,7 +13,7 @@ authors.workspace = true
 [features]
 default = []
 # A blocking mirror of the generated client. Roughly doubles generated output, so it is
-# off by default and the `fjo` binary never enables it.
+# off by default and the `fcli` binary never enables it.
 sync = ["reqwest/blocking"]
 
 [dependencies]

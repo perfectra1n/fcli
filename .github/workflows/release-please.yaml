@@ -13,8 +13,8 @@ name: Release Please
 # `simple` therefore keeps the release version in .release-please-manifest.json and
 # leaves every crate at its own version — the same arrangement kopiur uses.
 #
-# The consequence is that crates/fjo/Cargo.toml no longer tracks the release, so
-# release.yaml's verify job reads the manifest file instead. `fjo --version` still
+# The consequence is that crates/fcli/Cargo.toml no longer tracks the release, so
+# release.yaml's verify job reads the manifest file instead. `fcli --version` still
 # reports the crate version, which will lag the tag until the crates are published
 # and there is a reason for them to agree.
 
@@ -60,7 +60,7 @@ jobs:
       # workflow_dispatch and repository_dispatch are the two documented exceptions,
       # so we dispatch release.yaml explicitly. Dispatching at the tag ref makes
       # GITHUB_REF_NAME resolve to the tag inside that run, which is what its verify
-      # job and its `fjo-${GITHUB_REF_NAME}-<target>` archive naming already expect —
+      # job and its `fcli-${GITHUB_REF_NAME}-<target>` archive naming already expect —
       # so release.yaml needs no change on account of this.
       #
       # kopiur solves the same problem with a GitHub App token and

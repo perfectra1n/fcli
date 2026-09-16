@@ -1,0 +1,17 @@
+---
+source: crates/fcli/tests/setup.rs
+expression: report
+---
+== fcli config list
+browser		default
+color	auto	default
+credential_store	keyring	default
+editor	hx	config
+pager		default
+prompt	enabled	default
+
+== fcli alias list
+prs	pr list
+
+== fcli auth status --json host,login,authenticated,scopes
+[{"host":"git.example.org","login":"perf3ct","authenticated":false,"scopes":["read:repository","write:issue"]}]

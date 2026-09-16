@@ -1,7 +1,7 @@
 //! Scrubbing credentials out of anything we might print.
 //!
 //! Every debug/trace path in this crate goes through here, because the failure mode is
-//! catastrophic and silent: a user pastes `fjo --debug` output into a bug report and has now
+//! catastrophic and silent: a user pastes `fcli --debug` output into a bug report and has now
 //! published a token with write access to their repositories. There is no way to un-publish
 //! it.
 //!
@@ -177,7 +177,7 @@ pub fn text<'a>(s: &'a str, secrets: &[&str]) -> Cow<'a, str> {
 mod tests {
     use super::*;
 
-    /// The bug: `fjo --debug` printing the full `Authorization` header, which is then pasted
+    /// The bug: `fcli --debug` printing the full `Authorization` header, which is then pasted
     /// verbatim into a public issue.
     #[test]
     fn authorization_value_never_survives() {

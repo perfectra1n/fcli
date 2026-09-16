@@ -179,7 +179,7 @@ impl<'a> Ctx<'a> {
     /// input serde can hand it**, including an empty object. So `One` is not "the object arm";
     /// it is a catch-all that swallows whatever `Many` rejected and yields an all-default value.
     ///
-    /// That is exactly how `fjo workflow list` came to print nothing, with exit 0, for a
+    /// That is exactly how `fcli workflow list` came to print nothing, with exit 0, for a
     /// repository that has `ci.yml`: the real directory array failed `Many` on four `null`
     /// fields, matched `One` instead, produced an entry with `name: ""` and `type: ""`, and the
     /// `type == "file"` filter dropped it. A wrong answer delivered as a success.
@@ -488,7 +488,7 @@ impl<'a> Ctx<'a> {
             "//! Each of these is a string that the specification — or `overrides.toml`, for the\n",
             "//! six Go named string types whose values the spec omits — lists known values for.\n",
             "//! They are *open*: an unlisted value deserializes into `Unknown` and re-serializes\n",
-            "//! verbatim, so pointing `fjo` at a newer Forgejo cannot turn a listing into a\n",
+            "//! verbatim, so pointing `fcli` at a newer Forgejo cannot turn a listing into a\n",
             "//! decode error. See `crate::open_enum` for the four properties that buys.\n",
         ));
 
@@ -993,7 +993,7 @@ mod vendored {
         // must not be: `#[serde(untagged)]` takes the first variant that parses, and because
         // every generated model defaults every field, `One` parses anything. That is how a real
         // directory array became an all-default entry with `name: ""` and `type: ""`, which
-        // `fjo workflow list` then filtered away — reporting no workflows, with exit 0, for a
+        // `fcli workflow list` then filtered away — reporting no workflows, with exit 0, for a
         // repository that has one.
         assert!(src.contains("#[derive(Debug, Clone, PartialEq, Serialize)]"), "{src}");
         assert!(src.contains("#[serde(untagged)]"), "{src}");

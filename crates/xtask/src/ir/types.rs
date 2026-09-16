@@ -33,7 +33,7 @@
 //!
 //! ```text
 //! EditIssueOption { title: String, body: String, ... }   // DefaultPlain, no skip_serializing_if
-//! fjo issue edit 42 --title "new title"
+//! fcli issue edit 42 --title "new title"
 //!   => PATCH {"title":"new title","body":"","ref":"","milestone":0, ...}
 //! ```
 //!

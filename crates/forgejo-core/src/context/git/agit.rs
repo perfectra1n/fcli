@@ -23,7 +23,7 @@
 //! 2. **Updating means pushing the same topic again.** A different topic opens a *second*
 //!    pull request, which is why a caller's default topic has to be something stable — a
 //!    branch name, not a timestamp.
-//! 3. **An amended or rebased history needs a force push** (`fjo pr create --agit
+//! 3. **An amended or rebased history needs a force push** (`fcli pr create --agit
 //!    --force-push`), since the update must otherwise be a fast-forward. That is the same rule
 //!    as any other push, arriving in a place people do not expect it, so
 //!    [`AgitRemedy::ForcePush`](crate::error::AgitRemedy::ForcePush) names it when git's own

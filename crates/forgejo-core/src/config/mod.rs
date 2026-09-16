@@ -8,7 +8,7 @@
 //! * `hosts.toml` — identity, and *possibly* tokens when the file credential store is in
 //!   use. Mode 0600, never printed.
 //!
-//! Keeping them apart means `fjo config list` can be pasted into an issue without a
+//! Keeping them apart means `fcli config list` can be pasted into an issue without a
 //! redaction pass, which is the whole reason `gh` splits them too.
 
 // `crate::Error` is 168 bytes: `kind` is boxed, but `RequestCtx` is inline and holds seven
@@ -40,7 +40,7 @@ pub const HOSTS_FILE: &str = "hosts.toml";
 ///
 /// This is a trait rather than direct [`std::env::var`] calls for one hard reason: in Rust
 /// 2024 `std::env::set_var` is `unsafe`, because mutating the environment races with any
-/// other thread reading it. Tests that need `FJO_TOKEN` or `FORGEJO_REPO` set therefore
+/// other thread reading it. Tests that need `FCLI_TOKEN` or `FORGEJO_REPO` set therefore
 /// cannot set them for real without being both unsafe and order-dependent under
 /// `cargo test`'s thread pool. Injecting a [`MapEnv`] instead makes every test hermetic and
 /// parallel-safe.
@@ -87,7 +87,7 @@ impl Env for MapEnv {
 
 /// Where `config.toml` and `hosts.toml` live.
 ///
-/// Resolution order — `$FJO_CONFIG_DIR`, then `$XDG_CONFIG_HOME/fjo`, then the platform
+/// Resolution order — `$FCLI_CONFIG_DIR`, then `$XDG_CONFIG_HOME/fcli`, then the platform
 /// default via `etcetera`'s *base* strategy. The base strategy (not the native one) is
 /// correct for a CLI: on macOS it yields `~/.config` rather than
 /// `~/Library/Application Support`, which is what every other command-line tool a user has
@@ -96,18 +96,18 @@ impl Env for MapEnv {
 /// `$XDG_CONFIG_HOME` is honoured explicitly rather than left to `etcetera` so that it also
 /// works on Windows, where someone running under MSYS/Git-Bash may well have set it.
 pub fn config_dir(env: &dyn Env) -> Result<PathBuf> {
-    if let Some(dir) = env.get("FJO_CONFIG_DIR") {
+    if let Some(dir) = env.get("FCLI_CONFIG_DIR") {
         return Ok(PathBuf::from(dir));
     }
     if let Some(dir) = env.get("XDG_CONFIG_HOME") {
-        return Ok(PathBuf::from(dir).join("fjo"));
+        return Ok(PathBuf::from(dir).join("fcli"));
     }
     let base = etcetera::choose_base_strategy().map_err(|e| {
         Error::new(ErrorKind::Usage(format!(
-            "cannot locate a configuration directory ({e}); set FJO_CONFIG_DIR"
+            "cannot locate a configuration directory ({e}); set FCLI_CONFIG_DIR"
         )))
     })?;
-    Ok(etcetera::BaseStrategy::config_dir(&base).join("fjo"))
+    Ok(etcetera::BaseStrategy::config_dir(&base).join("fcli"))
 }
 
 /// Writes `contents` to `path` via a same-directory temporary file plus `rename`.
@@ -123,7 +123,7 @@ pub(crate) fn write_atomic(path: &Path, contents: &str, mode: Option<u32>) -> Re
     let dir = path.parent().unwrap_or(Path::new("."));
     std::fs::create_dir_all(dir)?;
 
-    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("fjo.tmp");
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("fcli.tmp");
     let tmp = dir.join(format!(".{}.{}.tmp", file_name, std::process::id()));
 
     let mut opts = std::fs::OpenOptions::new();
@@ -207,9 +207,9 @@ pub const KEYS: &[&str] = &["browser", "color", "credential_store", "editor", "p
 /// Preferences, backed by `config.toml`.
 ///
 /// Held as a `toml::Table` rather than a typed struct so that **keys we do not recognise
-/// survive a round-trip**. A user on a newer `fjo` who runs an older one — a stale copy in
+/// survive a round-trip**. A user on a newer `fcli` who runs an older one — a stale copy in
 /// `~/.local/bin`, a distro package a release behind — must not have their settings silently
-/// deleted by the next `fjo config set`. Unknown keys are reported by
+/// deleted by the next `fcli config set`. Unknown keys are reported by
 /// [`Config::unknown_keys`] so the caller can warn instead.
 ///
 /// The cost of this choice is that comments and formatting are not preserved (that would
@@ -230,7 +230,7 @@ impl Config {
     /// Loads `config.toml` from an explicit directory.
     ///
     /// A missing file yields defaults and is **never** an error: a fresh install has no
-    /// config, and `fjo --version` must not fail because of that. A file that exists but
+    /// config, and `fcli --version` must not fail because of that. A file that exists but
     /// does not parse *is* an error — silently ignoring it would mean quietly discarding
     /// settings the user believes are in effect.
     pub fn load_from_dir(dir: &Path) -> Result<Self> {
@@ -245,7 +245,7 @@ impl Config {
         Ok(Self { dir: dir.to_owned(), path, table })
     }
 
-    /// An empty in-memory config rooted at `dir`. Used by tests and by `fjo config init`.
+    /// An empty in-memory config rooted at `dir`. Used by tests and by `fcli config init`.
     pub fn empty_at(dir: &Path) -> Self {
         Self { dir: dir.to_owned(), path: dir.join(CONFIG_FILE), table: toml::Table::new() }
     }
@@ -273,7 +273,7 @@ impl Config {
 
     /// Reads a key, preferring a `[hosts."<host>"]` override over the top-level value.
     ///
-    /// Returns the *stored* value, not the default — `fjo config get pager` on a fresh
+    /// Returns the *stored* value, not the default — `fcli config get pager` on a fresh
     /// install should print nothing rather than inventing `less`, so that a script can tell
     /// "unset" from "explicitly set to the default".
     pub fn get(&self, host: Option<&str>, key: &str) -> Option<String> {
@@ -283,7 +283,7 @@ impl Config {
     /// Sets a top-level key, or a per-host override when `host` is given.
     ///
     /// Validates against [`KEYS`] and against each key's value vocabulary, so a typo like
-    /// `fjo config set prompt off` fails immediately instead of being silently ignored
+    /// `fcli config set prompt off` fails immediately instead of being silently ignored
     /// until someone wonders why prompting still happens.
     pub fn set(&mut self, host: Option<&str>, key: &str, value: &str) -> Result<()> {
         let key = check_key(key)?;
@@ -334,7 +334,7 @@ impl Config {
     }
 
     /// Every recognized key with its **effective** value — the stored value if present,
-    /// otherwise the documented default. This is what `fjo config list` prints, and the
+    /// otherwise the documented default. This is what `fcli config list` prints, and the
     /// reason it shows defaults is that "what is my editor?" is the actual question.
     pub fn list(&self, host: Option<&str>) -> Vec<(&'static str, String)> {
         KEYS.iter()
@@ -397,13 +397,13 @@ impl Config {
         self.string(host, "pager")
     }
 
-    /// Pager to launch: `$FJO_PAGER` → `$PAGER` → config → `less`.
+    /// Pager to launch: `$FCLI_PAGER` → `$PAGER` → config → `less`.
     ///
     /// Environment before config is `gh`'s order and matters for one-off overrides
-    /// (`FJO_PAGER=cat fjo pr list`). An empty `$PAGER` counts as unset, not as "no
+    /// (`FCLI_PAGER=cat fcli pr list`). An empty `$PAGER` counts as unset, not as "no
     /// pager" — pass `--no-pager` for that.
     pub fn resolved_pager(&self, host: Option<&str>, env: &dyn Env) -> String {
-        env.get("FJO_PAGER")
+        env.get("FCLI_PAGER")
             .or_else(|| env.get("PAGER"))
             .or_else(|| self.pager(host))
             .unwrap_or_else(|| "less".into())
@@ -428,7 +428,7 @@ impl Config {
 
     /// Default: [`CredentialStore::Keyring`]. Note this is only the *preference*; the actual
     /// store is chosen by [`secrets::Credentials`], which also honours
-    /// `FJO_CREDENTIAL_STORE`, `--insecure-storage`, and the cached per-host probe result.
+    /// `FCLI_CREDENTIAL_STORE`, `--insecure-storage`, and the cached per-host probe result.
     pub fn credential_store(&self, host: Option<&str>) -> CredentialStore {
         self.parsed(host, "credential_store")
     }
@@ -558,7 +558,7 @@ mod tests {
 
     #[test]
     fn missing_file_is_defaults_not_an_error() {
-        // Regression net for: a fresh install where `fjo --version` fails because there
+        // Regression net for: a fresh install where `fcli --version` fails because there
         // is no config.toml yet.
         let dir = tmp();
         let c = Config::load_from_dir(dir.path()).unwrap();
@@ -601,7 +601,7 @@ mod tests {
 
     #[test]
     fn unknown_keys_survive_a_write() {
-        // Regression net for: an older fjo deleting a newer fjo's settings on `config set`.
+        // Regression net for: an older fcli deleting a newer fcli's settings on `config set`.
         let dir = tmp();
         std::fs::write(dir.path().join(CONFIG_FILE), "editor = \"hx\"\nfuture_thing = 7\n")
             .unwrap();
@@ -639,17 +639,17 @@ mod tests {
         let dir = tmp();
         let mut c = Config::empty_at(dir.path());
         c.set(None, "pager", "less").unwrap();
-        let env = MapEnv::new().with("FJO_PAGER", "cat");
+        let env = MapEnv::new().with("FCLI_PAGER", "cat");
         assert_eq!(c.resolved_pager(None, &env), "cat");
         assert_eq!(c.resolved_pager(None, &MapEnv::new()), "less");
     }
 
     #[test]
     fn config_dir_precedence() {
-        let e = MapEnv::new().with("FJO_CONFIG_DIR", "/a").with("XDG_CONFIG_HOME", "/b");
+        let e = MapEnv::new().with("FCLI_CONFIG_DIR", "/a").with("XDG_CONFIG_HOME", "/b");
         assert_eq!(config_dir(&e).unwrap(), PathBuf::from("/a"));
         let e = MapEnv::new().with("XDG_CONFIG_HOME", "/b");
-        assert_eq!(config_dir(&e).unwrap(), PathBuf::from("/b/fjo"));
+        assert_eq!(config_dir(&e).unwrap(), PathBuf::from("/b/fcli"));
     }
 
     #[test]

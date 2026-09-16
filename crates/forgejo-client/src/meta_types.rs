@@ -7,14 +7,14 @@
 //! structs. That does not work here, for one disqualifying reason: clap's derive path builds
 //! the *entire* command tree eagerly inside `Parser::parse()`. With ~3,000 flags across 506
 //! subcommands, that is thousands of `Arg` constructions, with their allocations, on **every
-//! invocation — including `fjo --version`**. Five to twenty milliseconds spent building a
+//! invocation — including `fcli --version`**. Five to twenty milliseconds spent building a
 //! parser the user will never reach, in a tool whose whole pre-network budget should be under
 //! twenty. The derive approach also costs minutes of compile time and megabytes of binary.
 //!
 //! So the generator emits these `const` tables instead. They are data, not generics: they
-//! compile in seconds and land in `.rodata`. `fjo-raw` then peeks at `argv`, and builds
+//! compile in seconds and land in `.rodata`. `fcli-raw` then peeks at `argv`, and builds
 //! `clap::Command` objects at runtime for **only the subtree the user actually named** — ten
-//! group stubs for `fjo raw --help`, one full command for `fjo raw repo create-pull-request`.
+//! group stubs for `fcli raw --help`, one full command for `fcli raw repo create-pull-request`.
 //!
 //! Everything here is `&'static` for that reason. Nothing in this module allocates.
 
@@ -42,7 +42,7 @@ pub enum PathEncoding {
 
 /// A parameter that can be filled from resolved repository context instead of being typed.
 ///
-/// This is what lets `fjo raw repo list-pull-requests` work inside a clone with no arguments
+/// This is what lets `fcli raw repo list-pull-requests` work inside a clone with no arguments
 /// at all, the same way `-R/--repo` is optional for the porcelain commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CtxFill {
@@ -251,7 +251,7 @@ impl FieldKind {
 /// Lookups over the generated tables.
 ///
 /// These take the tables as arguments rather than reading globals so that they are testable
-/// without the generated code, which lets `fjo-raw` be developed and unit-tested before the
+/// without the generated code, which lets `fcli-raw` be developed and unit-tested before the
 /// emitters exist.
 pub mod lookup {
     use super::{GroupMeta, OpMeta};

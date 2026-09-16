@@ -1,14 +1,14 @@
 ---
 source: crates/forgejo-core/src/error/render.rs
-expression: "snap(ErrorKind::RepoNotFound\n{\n    slug: \"perf3ct/fjo\".into(), host: \"git.example.org\".into(), login:\n    Some(\"perf3ct\".into()), probed: true, server_message: None,\n}, c)"
+expression: "snap(ErrorKind::RepoNotFound\n{\n    slug: \"perf3ct/fcli\".into(), host: \"git.example.org\".into(), login:\n    Some(\"perf3ct\".into()), probed: true, server_message: None,\n}, c)"
 ---
-error: could not find the repository perf3ct/fjo on git.example.org (HTTP 404)
+error: could not find the repository perf3ct/fcli on git.example.org (HTTP 404)
 
-  request:      GET /api/v1/repos/perf3ct/fjo/pulls/4212
-  repository:   perf3ct/fjo
+  request:      GET /api/v1/repos/perf3ct/fcli/pulls/4212
+  repository:   perf3ct/fcli
   host:         git.example.org
   logged in as: perf3ct
-  token from:   the OS keyring, entry fjo:git.example.org
+  token from:   the OS keyring, entry fcli:git.example.org
 
 what to do:
   check these possible causes:
@@ -17,5 +17,5 @@ what to do:
   2. for a private repository, check account access and read:repository.
      if the scope is missing, create a new token at
      https://git.example.org/user/settings/applications
-  3. check the configured server: fjo auth status
-  check repository access: fjo api repos/perf3ct/fjo
+  3. check the configured server: fcli auth status
+  check repository access: fcli api repos/perf3ct/fcli

@@ -95,7 +95,7 @@ pub trait GitCtx {
     // ----------------------------------------------------------------------- required reads
 
     /// `git rev-parse --git-dir`. `Ok(None)` means "not inside a git work tree", which is a
-    /// normal state (`fjo api user` works anywhere), not an error.
+    /// normal state (`fcli api user` works anywhere), not an error.
     fn git_dir(&self) -> Result<Option<PathBuf>>;
 
     /// `git remote -v`, in the order git lists them (alphabetical).
@@ -107,11 +107,11 @@ pub trait GitCtx {
     /// `git config --get-regexp <pattern>`, as `(key, value)` pairs.
     fn config_get_regexp(&self, pattern: &str) -> Result<Vec<(String, String)>>;
 
-    /// `git config --local <key> <value>`, used by `fjo repo set-default`.
+    /// `git config --local <key> <value>`, used by `fcli repo set-default`.
     fn config_set_local(&self, key: &str, value: &str) -> Result<()>;
 
     /// `git config --local --unset <key>`. Idempotent: unsetting a key that was never set is
-    /// success, so `fjo repo set-default --unset` does not fail the second time it is run.
+    /// success, so `fcli repo set-default --unset` does not fail the second time it is run.
     fn config_unset_local(&self, key: &str) -> Result<()>;
 
     /// `git branch --show-current`. `None` on a detached HEAD.

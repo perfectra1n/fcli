@@ -113,31 +113,31 @@ mod tests {
 
     #[test]
     fn plain_slug() {
-        let r: RepoRef = "perf3ct/fjo".parse().unwrap();
+        let r: RepoRef = "perf3ct/fcli".parse().unwrap();
         assert_eq!(r.host, None);
-        assert_eq!(r.slug.to_string(), "perf3ct/fjo");
+        assert_eq!(r.slug.to_string(), "perf3ct/fcli");
     }
 
     #[test]
     fn host_prefixed() {
-        let r: RepoRef = "git.example.org/perf3ct/fjo".parse().unwrap();
+        let r: RepoRef = "git.example.org/perf3ct/fcli".parse().unwrap();
         assert_eq!(r.host.as_deref(), Some("git.example.org"));
-        assert_eq!(r.slug.to_string(), "perf3ct/fjo");
+        assert_eq!(r.slug.to_string(), "perf3ct/fcli");
     }
 
     #[test]
     fn full_url_with_git_suffix() {
-        let r: RepoRef = "https://git.example.org/perf3ct/fjo.git".parse().unwrap();
+        let r: RepoRef = "https://git.example.org/perf3ct/fcli.git".parse().unwrap();
         assert_eq!(r.host.as_deref(), Some("git.example.org"));
-        assert_eq!(r.slug.name, "fjo");
+        assert_eq!(r.slug.name, "fcli");
     }
 
     #[test]
     fn subpath_install() {
         // Forgejo may be mounted under a path prefix; the prefix is not part of the slug.
-        let r: RepoRef = "https://example.org/forgejo/perf3ct/fjo".parse().unwrap();
+        let r: RepoRef = "https://example.org/forgejo/perf3ct/fcli".parse().unwrap();
         assert_eq!(r.host.as_deref(), Some("example.org"));
-        assert_eq!(r.slug.to_string(), "perf3ct/fjo");
+        assert_eq!(r.slug.to_string(), "perf3ct/fcli");
     }
 
     #[test]
@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn rejects_bare_name() {
-        assert!("fjo".parse::<RepoRef>().is_err());
+        assert!("fcli".parse::<RepoRef>().is_err());
         assert!("perf3ct/".parse::<RepoSlug>().is_err());
     }
 }

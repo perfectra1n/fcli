@@ -1,6 +1,0 @@
----
-source: crates/fjo/src/cmd/mirror.rs
-expression: "render_list(&Term::piped(), &mirrors())"
----
-remote_mirror_abc123	https://github.com/me/proj.git	(all, --mirror)	8h0m0s	yes	-	-
-remote_mirror_def456	https://codeberg.org/me/proj.git	main, release/*	10m0s	no	-	authentication required

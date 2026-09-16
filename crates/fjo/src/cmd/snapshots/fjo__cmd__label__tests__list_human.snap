@@ -1,9 +1,0 @@
----
-source: crates/fjo/src/cmd/label.rs
-expression: text(&buf)
----
-Showing 2 labels in perf3ct/fjo
-
-NAME  COLOR    DESCRIPTION
-bug   #e11d21  Something is broken
-ci    #1d76db

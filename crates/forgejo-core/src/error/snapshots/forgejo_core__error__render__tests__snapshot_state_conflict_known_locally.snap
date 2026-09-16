@@ -10,6 +10,6 @@ error: operation unavailable: pull request 4212 is closed
 
 what to do:
   the current state prevents this operation. Check the server message above.
-  1. fjo auth status  (read the current state)
+  1. fcli auth status  (read the current state)
   2. resolve the reported state conflict, then retry
   note: changing token scopes does not resolve a state conflict.

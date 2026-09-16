@@ -1,4 +1,4 @@
-# Contributing to fjo
+# Contributing to fcli
 
 ## The boundary that matters: generated versus hand-written
 
@@ -53,7 +53,7 @@ Use `git diff --text` when you do want to read them.
 Never add an inherent `impl` to a generated struct — the next `codegen` run deletes it.
 
 ```rust
-// crates/fjo/src/cmd/pr/view.rs  — hand-written, not under generated/
+// crates/fcli/src/cmd/pr/view.rs  — hand-written, not under generated/
 impl Render for forgejo_model::PullRequest {
     // ...
 }
@@ -110,10 +110,10 @@ Two consequences:
 | `forgejo-core` | yes | Hand-written runtime: HTTP, auth, pagination, errors, config, git context |
 | `forgejo-model` | yes | Generated types, plus the `open_enum!` macro and lenient deserializers |
 | `forgejo-client` | yes | Generated client, metadata tables and `--json` field tables |
-| `fjo-raw` | no | Layer 2: builds clap commands at runtime from those tables |
-| `fjo` | no | The binary: `fjo api`, the porcelain, the output system |
+| `fcli-raw` | no | Layer 2: builds clap commands at runtime from those tables |
+| `fcli` | no | The binary: `fcli api`, the porcelain, the output system |
 | `xtask` | no | The generator. Never a dependency of the binary |
-| `fjo-itest` | no | Integration tests against a real Forgejo |
+| `fcli-itest` | no | Integration tests against a real Forgejo |
 
 `forgejo-core` deliberately does **not** depend on `forgejo-model`, so the two largest units
 compile in parallel. Do not add that dependency; if `forgejo-core` needs to read a response body,
@@ -130,7 +130,7 @@ advisory. The short version:
 
 - Layer 2 already reaches every endpoint, so a layer-3 command must earn its place by inferring
   context, orchestrating several calls, prompting, or rendering better than JSON. A command that
-  is a renamed `fjo raw` call is not worth its maintenance.
+  is a renamed `fcli raw` call is not worth its maintenance.
 - Verbs are `gh`'s: `list`, `view`, `create`, `edit`, `close`, `delete` — not `get`/`update`/`remove`.
 - Never redeclare a global flag (`-R/--repo`, `--host`, `--login`, `--json`, `--jq`,
   `--template`, `--color`, `--sudo`, `--otp`, `--debug`, `--paginate`, `--limit`, `--force`,
@@ -139,9 +139,9 @@ advisory. The short version:
   `--as-template`, `--from-template`, `--bytes` all exist for this reason, and
   [docs/gh-differences.md](docs/gh-differences.md) records why. Do not reach for clap's `global`
   suppression: it is tree-wide, so one command suppressing `--limit` deletes it everywhere else.
-- `crates/fjo/tests/porcelain_cli.rs` walks the whole tree through clap's own `debug_assert`
+- `crates/fcli/tests/porcelain_cli.rs` walks the whole tree through clap's own `debug_assert`
   consistency checks. It is what catches the panics above. Keep it passing.
-- Route output through `fjo::output` and pass the generated field table, so `--json`, bare
+- Route output through `fcli::output` and pass the generated field table, so `--json`, bare
   `--json`, `--jq` and `--template` all work without per-command effort.
 - Report failures as `forgejo_core::Error`. If the taxonomy cannot express the failure, **add a
   variant** — a test asserts every variant renders a "what to do" section.
@@ -230,12 +230,12 @@ Every row is `mise run <task>`; the commands live in `.mise/config.toml` and now
 | Docs | `docs` | rustdoc for the three published crates, `RUSTDOCFLAGS=-D warnings` |
 | Licences and bans | `deny` | `cargo deny check` |
 | Ratchets | `panic-check`, `exit-check`, `support-check`, `complexity-check` | count budgets |
-| Budgets | `budget-check` | `fjo --version` under 25 ms, `fjo raw repo create-pull-request --help` under 40 ms, stripped release binary under `SIZE_BUDGET` |
+| Budgets | `budget-check` | `fcli --version` under 25 ms, `fcli raw repo create-pull-request --help` under 40 ms, stripped release binary under `SIZE_BUDGET` |
 | Integration | `itest` | boots a throwaway `forgejo:16.0.4` in Docker |
 
 The budget job exists because layer 2 holds 506 commands. They are built lazily from a `const`
 data table by a two-phase parse in `main`, and if that ever regresses to eager construction,
-`fjo --version` is where it shows up first. The size half of the same job measures the same
+`fcli --version` is where it shows up first. The size half of the same job measures the same
 decision from the other side: ~61k generated lines with zero type generics and no
 macros-with-logic, so nothing monomorphises per call site.
 
@@ -255,7 +255,7 @@ Two details are worth knowing before they surprise you.
 - **The version lives in `.release-please-manifest.json`, not in any `Cargo.toml`.** release-please
   runs as release-type `simple`. Its Rust strategy cannot be used here: it calls `CargoToml` on the
   workspace root, which throws on a manifest with no `[package]` section, and this root is virtual.
-  So the crates stay at their own versions and `fjo --version` lags the tag. `release.yaml`'s verify
+  So the crates stay at their own versions and `fcli --version` lags the tag. `release.yaml`'s verify
   job reads the JSON file for the same reason.
 - **`release.yaml` is dispatched, not triggered.** GitHub refuses to start a workflow from an event
   raised by `GITHUB_TOKEN`, so the tag release-please pushes reaches nothing on its own.
@@ -282,7 +282,7 @@ footer) bumps the minor rather than the major.
 - **`infer_scope` is still a live fallback, not dead code.** A 403's `needs:` line now prefers
   the scope the generator recorded: `Request::scope` carries it, generated call sites pass a
   literal, layer 2 assigns `OpMeta::scope`, and `error_from` feeds it to
-  `ClassifyCtx::with_op_scope`. But `fjo api` takes a path the user typed and has no operation
+  `ClassifyCtx::with_op_scope`. But `fcli api` takes a path the user typed and has no operation
   to look up, so it carries no scope and `infer_scope` answers instead. The two rules disagree
   on 37 of the 506 routes — every pull-request route, which the spec tags `repository` while the
   path reads as `issue` — so do not delete the fallback and do not assume the two agree.

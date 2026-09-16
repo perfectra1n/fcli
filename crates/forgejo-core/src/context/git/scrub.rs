@@ -95,7 +95,7 @@ fn is_right_delim(c: char) -> bool {
 mod tests {
     use super::*;
 
-    /// The bug: `fjo repo clone` failing and reporting
+    /// The bug: `fcli repo clone` failing and reporting
     /// `git clone https://me:ghp_realtoken@forge/o/r.git failed: …` — which the user then
     /// pastes into an issue.
     #[test]

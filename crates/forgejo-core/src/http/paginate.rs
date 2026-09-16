@@ -17,7 +17,7 @@
 //!
 //! Forgejo clamps `limit` to `max_response_items` (default **50**) without saying so: no
 //! warning, no header, no error. Ask for 100, get 50. Under the intuitive rule the client sees
-//! `50 < 100`, concludes it has everything, and stops. `fjo issue list --limit 100` on a
+//! `50 < 100`, concludes it has everything, and stops. `fcli issue list --limit 100` on a
 //! repository with 300 issues prints 50 issues and exits 0. No one notices until a script that
 //! was supposed to close stale issues quietly stops after the first fifty.
 //!
@@ -317,7 +317,7 @@ impl Paginator {
     ///
     /// The `Result` is rule (f), and it is a `Result` rather than a sixth [`StopReason`] on
     /// purpose: a stop reason can be ignored by a caller that only cares about items, and this
-    /// one must not be. Every driver of this type — the [`ItemStream`] here, `fjo`'s
+    /// one must not be. Every driver of this type — the [`ItemStream`] here, `fcli`'s
     /// page-at-a-time `--paginate` walk — gets a compile error until it decides what to do,
     /// which is the only way a guard against an infinite loop stays in place.
     ///
@@ -715,7 +715,7 @@ mod tests {
         ///
         /// The intuitive termination rule — "a page shorter than the requested `limit` is the last
         /// page" — sees `50 < 100` on page 1 and stops. That returns 50 of 120 issues, prints them,
-        /// and **exits 0**. No error, no warning, no way for a script to detect it. `fjo issue
+        /// and **exits 0**. No error, no warning, no way for a script to detect it. `fcli issue
         /// list --limit 100` would silently lose everything past item 50, and a cleanup script
         /// built on it would silently stop working.
         ///

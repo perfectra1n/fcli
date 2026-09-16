@@ -253,37 +253,37 @@ fn deleting_an_unmerged_branch_is_a_false_not_an_error() {
 
 // ------------------------------------------------------------------------------------ config
 
-/// The key the resolver's step 4 reads: `remote.<name>.fjo-resolved`, written by
-/// `fjo repo set-default`.
+/// The key the resolver's step 4 reads: `remote.<name>.fcli-resolved`, written by
+/// `fcli repo set-default`.
 #[test]
 fn the_resolved_key_round_trips_through_config() {
     let git = FakeGit::repo();
-    git.config_set_local("remote.origin.fjo-resolved", "base").expect("write");
-    assert_eq!(git.config_get("remote.origin.fjo-resolved").unwrap().as_deref(), Some("base"));
+    git.config_set_local("remote.origin.fcli-resolved", "base").expect("write");
+    assert_eq!(git.config_get("remote.origin.fcli-resolved").unwrap().as_deref(), Some("base"));
     assert_eq!(
-        git.config_snapshot().get("remote.origin.fjo-resolved").map(String::as_str),
+        git.config_snapshot().get("remote.origin.fcli-resolved").map(String::as_str),
         Some("base")
     );
-    git.config_unset_local("remote.origin.fjo-resolved").expect("unset");
-    assert_eq!(git.config_get("remote.origin.fjo-resolved").unwrap(), None);
+    git.config_unset_local("remote.origin.fcli-resolved").expect("unset");
+    assert_eq!(git.config_get("remote.origin.fcli-resolved").unwrap(), None);
 }
 
-/// Bug this prevents: `fjo repo set-default --unset` failing the second time it is run,
+/// Bug this prevents: `fcli repo set-default --unset` failing the second time it is run,
 /// because git exits 5 for a key that was not there.
 #[test]
 fn unsetting_an_absent_key_is_not_a_failure() {
     let git = FakeGit::repo();
-    git.config_unset_local("remote.origin.fjo-resolved").expect("idempotent unset");
+    git.config_unset_local("remote.origin.fcli-resolved").expect("idempotent unset");
 }
 
 #[test]
 fn config_regexp_finds_the_resolved_keys() {
     let git = FakeGit::repo()
-        .with_config("remote.origin.fjo-resolved", "base")
+        .with_config("remote.origin.fcli-resolved", "base")
         .with_config("remote.origin.url", "https://x/y/z")
         .with_config("branch.main.remote", "origin");
-    let found = git.config_get_regexp(r"^remote\..*\.fjo-resolved$").unwrap();
-    assert_eq!(found, vec![("remote.origin.fjo-resolved".to_owned(), "base".to_owned())]);
+    let found = git.config_get_regexp(r"^remote\..*\.fcli-resolved$").unwrap();
+    assert_eq!(found, vec![("remote.origin.fcli-resolved".to_owned(), "base".to_owned())]);
 }
 
 // ----------------------------------------------------------------------------------- remotes
@@ -297,7 +297,7 @@ fn adding_and_renaming_a_remote_changes_what_resolution_sees() {
     git.remote_add("upstream", "https://forge/them/proj.git").expect("add");
     assert!(git.remote_exists("upstream").unwrap());
 
-    // `fjo repo fork --remote` renames the remote that pointed at the source.
+    // `fcli repo fork --remote` renames the remote that pointed at the source.
     git.remote_rename("origin", "old").expect("rename");
     assert!(git.remote_exists("old").unwrap());
     assert!(!git.remote_exists("origin").unwrap());

@@ -58,7 +58,7 @@ pub struct Lock {
     /// The git tag, e.g. `v16.0.4`.
     pub tag: String,
     /// The tag without its `v`, e.g. `16.0.4`. This is what `info.version` is set to and what
-    /// `fjo --version` reports.
+    /// `fcli --version` reports.
     pub version: String,
     pub source: String,
     pub upstream: String,

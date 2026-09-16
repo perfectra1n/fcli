@@ -10,5 +10,5 @@ error: invalid --jq expression
 
 what to do:
   correct the jq expression using the error above.
-  1. fjo api repos/OWNER/REPO/pulls > /tmp/p.json  then iterate with jq locally
+  1. fcli api repos/OWNER/REPO/pulls > /tmp/p.json  then iterate with jq locally
   2. reference: https://jqlang.github.io/jq/manual/

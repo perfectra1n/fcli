@@ -1,20 +1,20 @@
 ---
 source: crates/forgejo-core/src/error/render.rs
-expression: "snap(ErrorKind::RepoNotFound\n{\n    slug: \"perf3ct/fjo\".into(), host: \"git.example.org\".into(), login:\n    Some(\"perf3ct\".into()), probed: false, server_message: None,\n}, c)"
+expression: "snap(ErrorKind::RepoNotFound\n{\n    slug: \"perf3ct/fcli\".into(), host: \"git.example.org\".into(), login:\n    Some(\"perf3ct\".into()), probed: false, server_message: None,\n}, c)"
 ---
-error: repository or resource not found under perf3ct/fjo on git.example.org (HTTP 404)
+error: repository or resource not found under perf3ct/fcli on git.example.org (HTTP 404)
 
-  request:      GET /api/v1/repos/perf3ct/fjo/pulls/4212
-  repository:   perf3ct/fjo  (not checked)
+  request:      GET /api/v1/repos/perf3ct/fcli/pulls/4212
+  repository:   perf3ct/fcli  (not checked)
   host:         git.example.org
   logged in as: perf3ct
-  token from:   the OS keyring, entry fjo:git.example.org
+  token from:   the OS keyring, entry fcli:git.example.org
 
 what to do:
   the repository check was disabled or failed. The repository or a referenced
   resource may be missing.
-  1. fjo api repos/perf3ct/fjo  (check repository access)
+  1. fcli api repos/perf3ct/fcli  (check repository access)
   2. another 404 may mean the repository is missing, private with a token
-     that lacks read:repository, or on another server. Check: fjo auth status
+     that lacks read:repository, or on another server. Check: fcli auth status
   3. if it succeeds, check the resources referenced by the request:
      branch, tag, or user names

@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      # Reads .release-please-manifest.json, not crates/fjo/Cargo.toml. release-please
+      # Reads .release-please-manifest.json, not crates/fcli/Cargo.toml. release-please
       # runs as release-type `simple` (the Rust strategy throws on this repo's virtual
       # workspace manifest), so it owns the version in that JSON file and never edits a
       # Cargo.toml. The crate versions therefore no longer track the tag, and checking
@@ -75,8 +75,8 @@ jobs:
           set -euo pipefail
           mkdir -p dist/completions
           for shell in bash zsh fish powershell elvish; do
-            cargo run --locked -q -p fjo -- completion "$shell" \
-              > "dist/completions/fjo.$shell"
+            cargo run --locked -q -p fcli -- completion "$shell" \
+              > "dist/completions/fcli.$shell"
           done
           ls -la dist/completions
       - uses: actions/upload-artifact@v4
@@ -130,7 +130,7 @@ jobs:
 
       - name: Build
         shell: bash
-        run: cargo build --release --locked -p fjo --target ${{ matrix.target }}
+        run: cargo build --release --locked -p fcli --target ${{ matrix.target }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -143,12 +143,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          stage="fjo-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          stage="fcli-${GITHUB_REF_NAME}-${{ matrix.target }}"
           mkdir -p "$stage"
           if [ "${{ matrix.archive }}" = "zip" ]; then
-            cp "target/${{ matrix.target }}/release/fjo.exe" "$stage/"
+            cp "target/${{ matrix.target }}/release/fcli.exe" "$stage/"
           else
-            cp "target/${{ matrix.target }}/release/fjo" "$stage/"
+            cp "target/${{ matrix.target }}/release/fcli" "$stage/"
           fi
           cp README.md LICENSE "$stage/"
           cp -r completions "$stage/completions"

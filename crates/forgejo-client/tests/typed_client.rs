@@ -38,10 +38,10 @@ fn api(fake: Arc<FakeTransport>) -> Api {
 async fn a_typed_get_deserialises_into_a_generated_model() {
     let fake = Arc::new(FakeTransport::new().on(
         Method::GET,
-        "/api/v1/repos/perf3ct/fjo/pulls/7",
+        "/api/v1/repos/perf3ct/fcli/pulls/7",
         Canned::json(200, r#"{"number":7,"title":"Add the client emitter","state":"open"}"#),
     ));
-    let pr = api(fake).repo().get_pull_request("perf3ct", "fjo", 7).await.unwrap();
+    let pr = api(fake).repo().get_pull_request("perf3ct", "fcli", 7).await.unwrap();
     // `number` is the curated `IssueIndex` newtype, not a bare i64: the per-repo counter and the
     // global row id are different things, and mixing them silently operates on another issue.
     assert_eq!(pr.number.to_string(), "7");
@@ -52,7 +52,7 @@ async fn a_typed_get_deserialises_into_a_generated_model() {
 async fn a_body_is_serialised_from_the_generated_option_type() {
     let fake = Arc::new(FakeTransport::new().on(
         Method::POST,
-        "/api/v1/repos/perf3ct/fjo/pulls",
+        "/api/v1/repos/perf3ct/fcli/pulls",
         Canned::json(201, r#"{"number":8}"#),
     ));
     let body = forgejo_client::forgejo_model::CreatePullRequestOption {
@@ -61,7 +61,7 @@ async fn a_body_is_serialised_from_the_generated_option_type() {
         head: Some("topic".to_owned()),
         ..Default::default()
     };
-    let pr = api(fake.clone()).repo().create_pull_request("perf3ct", "fjo", &body).await.unwrap();
+    let pr = api(fake.clone()).repo().create_pull_request("perf3ct", "fcli", &body).await.unwrap();
     assert_eq!(pr.number.to_string(), "8");
 
     let sent = fake.calls()[0].body_str();
@@ -78,10 +78,10 @@ async fn a_body_is_serialised_from_the_generated_option_type() {
 async fn a_204_endpoint_returns_unit_without_decoding() {
     let fake = Arc::new(FakeTransport::new().on(
         Method::DELETE,
-        "/api/v1/repos/perf3ct/fjo",
+        "/api/v1/repos/perf3ct/fcli",
         Canned::new(204),
     ));
-    api(fake).repo().delete("perf3ct", "fjo").await.unwrap();
+    api(fake).repo().delete("perf3ct", "fcli").await.unwrap();
 }
 
 /// The `get-contents` 404. `filepath` is path-like, so its slashes are structural: encoded, the
@@ -91,16 +91,16 @@ async fn a_204_endpoint_returns_unit_without_decoding() {
 async fn a_path_like_parameter_keeps_its_slashes_on_the_wire() {
     let fake = Arc::new(FakeTransport::new().on(
         Method::GET,
-        "/api/v1/repos/perf3ct/fjo/contents/src/main.rs",
+        "/api/v1/repos/perf3ct/fcli/contents/src/main.rs",
         Canned::json(200, r#"{"name":"main.rs","path":"src/main.rs"}"#),
     ));
     let out = api(fake.clone())
         .repo()
-        .get_contents("perf3ct", "fjo", "src/main.rs", &query::RepoGetContentsQuery::default())
+        .get_contents("perf3ct", "fcli", "src/main.rs", &query::RepoGetContentsQuery::default())
         .await
         .unwrap();
     assert_eq!(out.one().expect("a file is the single-entry shape").path, "src/main.rs");
-    assert_eq!(fake.calls()[0].path, "/api/v1/repos/perf3ct/fjo/contents/src/main.rs");
+    assert_eq!(fake.calls()[0].path, "/api/v1/repos/perf3ct/fcli/contents/src/main.rs");
     // A default query struct sends nothing at all, so no stray `?ref=`.
     assert_eq!(fake.calls()[0].query, "");
 }
@@ -109,18 +109,18 @@ async fn a_path_like_parameter_keeps_its_slashes_on_the_wire() {
 ///
 /// The specification declares only the single-value shape, so a generated
 /// `Result<ContentsResponse>` failed here with "invalid type: sequence, expected struct
-/// ContentsResponse" — which is why `fjo workflow` had to hand-roll the request instead of
+/// ContentsResponse" — which is why `fcli workflow` had to hand-roll the request instead of
 /// calling the generated method.
 #[tokio::test]
 async fn get_contents_decodes_the_directory_shape_too() {
     let fake = Arc::new(FakeTransport::new().on(
         Method::GET,
-        "/api/v1/repos/perf3ct/fjo/contents/src",
+        "/api/v1/repos/perf3ct/fcli/contents/src",
         Canned::json(200, r#"[{"name":"main.rs","path":"src/main.rs"},{"name":"lib.rs"}]"#),
     ));
     let out = api(fake)
         .repo()
-        .get_contents("perf3ct", "fjo", "src", &query::RepoGetContentsQuery::default())
+        .get_contents("perf3ct", "fcli", "src", &query::RepoGetContentsQuery::default())
         .await
         .unwrap();
     assert!(out.one().is_none(), "a directory listing is not a single entry");
@@ -134,11 +134,11 @@ async fn get_contents_decodes_the_directory_shape_too() {
 async fn a_segment_parameter_containing_a_slash_is_percent_encoded() {
     let fake = Arc::new(FakeTransport::new().on(
         Method::GET,
-        "/api/v1/repos/a%2Fb/fjo",
-        Canned::json(200, r#"{"name":"fjo"}"#),
+        "/api/v1/repos/a%2Fb/fcli",
+        Canned::json(200, r#"{"name":"fcli"}"#),
     ));
-    api(fake.clone()).repo().get("a/b", "fjo").await.unwrap();
-    assert_eq!(fake.calls()[0].path, "/api/v1/repos/a%2Fb/fjo");
+    api(fake.clone()).repo().get("a/b", "fcli").await.unwrap();
+    assert_eq!(fake.calls()[0].path, "/api/v1/repos/a%2Fb/fcli");
 }
 
 /// One of exactly two paths in the spec where two parameters share a segment, separated by a
@@ -148,14 +148,14 @@ async fn a_segment_parameter_containing_a_slash_is_percent_encoded() {
 async fn the_dotted_pull_diff_path_renders_a_literal_dot() {
     let fake = Arc::new(FakeTransport::new().on(
         Method::GET,
-        "/api/v1/repos/perf3ct/fjo/pulls/7.diff",
+        "/api/v1/repos/perf3ct/fcli/pulls/7.diff",
         Canned::text(200, "diff --git a/x b/x\n"),
     ));
     let diff = api(fake.clone())
         .repo()
         .download_pull_diff_or_patch(
             "perf3ct",
-            "fjo",
+            "fcli",
             7,
             "diff",
             &query::RepoDownloadPullDiffOrPatchQuery::default(),
@@ -163,7 +163,7 @@ async fn the_dotted_pull_diff_path_renders_a_literal_dot() {
         .await
         .unwrap();
     assert!(diff.starts_with("diff --git"), "{diff}");
-    assert_eq!(fake.calls()[0].path, "/api/v1/repos/perf3ct/fjo/pulls/7.diff");
+    assert_eq!(fake.calls()[0].path, "/api/v1/repos/perf3ct/fcli/pulls/7.diff");
     assert_eq!(fake.calls()[0].header("accept"), Some("text/plain"));
 }
 
@@ -174,12 +174,12 @@ async fn the_dotted_commit_diff_path_renders_a_literal_dot() {
     let sha = "0123456789abcdef";
     let fake = Arc::new(FakeTransport::new().on(
         Method::GET,
-        &format!("/api/v1/repos/perf3ct/fjo/git/commits/{sha}.patch"),
+        &format!("/api/v1/repos/perf3ct/fcli/git/commits/{sha}.patch"),
         Canned::text(200, "From 0123 Mon Sep 17\n"),
     ));
     let patch = api(fake.clone())
         .repo()
-        .download_commit_diff_or_patch("perf3ct", "fjo", sha, "patch")
+        .download_commit_diff_or_patch("perf3ct", "fcli", sha, "patch")
         .await
         .unwrap();
     assert!(patch.starts_with("From 0123"), "{patch}");
@@ -189,11 +189,11 @@ async fn the_dotted_commit_diff_path_renders_a_literal_dot() {
 async fn a_binary_endpoint_streams_its_bytes_and_reports_its_media_type() {
     let fake = Arc::new(FakeTransport::new().on(
         Method::GET,
-        "/api/v1/repos/perf3ct/fjo/archive/main.zip",
+        "/api/v1/repos/perf3ct/fcli/archive/main.zip",
         Canned::bytes(200, "application/zip", &b"PK\x03\x04"[..]),
     ));
     let (mime, mut body) =
-        api(fake.clone()).repo().get_archive("perf3ct", "fjo", "main.zip").await.unwrap();
+        api(fake.clone()).repo().get_archive("perf3ct", "fcli", "main.zip").await.unwrap();
     assert_eq!(mime.essence(), "application/zip");
     let mut bytes = Vec::new();
     while let Some(chunk) = body.next().await {
@@ -288,29 +288,29 @@ async fn the_stream_half_drops_a_page_number_from_the_query() {
 async fn a_multipart_upload_posts_to_the_asset_endpoint() {
     let fake = Arc::new(FakeTransport::new().on(
         Method::POST,
-        "/api/v1/repos/perf3ct/fjo/releases/12/assets",
-        Canned::json(201, r#"{"id":3,"name":"fjo.tar.gz"}"#),
+        "/api/v1/repos/perf3ct/fcli/releases/12/assets",
+        Canned::json(201, r#"{"id":3,"name":"fcli.tar.gz"}"#),
     ));
     let attachment = Part::bytes("ignored-by-the-generated-method", b"payload".to_vec())
-        .with_filename("fjo.tar.gz");
+        .with_filename("fcli.tar.gz");
     let out = api(fake.clone())
         .repo()
         .create_release_attachment(
             "perf3ct",
-            "fjo",
+            "fcli",
             12,
             Some(attachment),
             None,
-            &query::RepoCreateReleaseAttachmentQuery::default().with_name("fjo.tar.gz"),
+            &query::RepoCreateReleaseAttachmentQuery::default().with_name("fcli.tar.gz"),
             Progress::new(),
         )
         .await
         .unwrap();
-    assert_eq!(out.name, "fjo.tar.gz");
+    assert_eq!(out.name, "fcli.tar.gz");
     let call = &fake.calls()[0];
-    assert_eq!(call.query_param("name"), Some("fjo.tar.gz"));
+    assert_eq!(call.query_param("name"), Some("fcli.tar.gz"));
     // The body never materialises as bytes anywhere in the client. That is the property that
-    // keeps `fjo release create v1 ./big.iso` at a few hundred kilobytes of RSS instead of the
+    // keeps `fcli release create v1 ./big.iso` at a few hundred kilobytes of RSS instead of the
     // file's size, and `FakeTransport` only records a body for the buffered kinds.
     assert!(call.body.is_none(), "a multipart upload must stream, not buffer");
 }
@@ -399,7 +399,7 @@ fn the_facade_exposes_every_group() {
 async fn a_403_names_the_scope_codegen_recorded_not_the_one_inferred_from_the_path() {
     let fake = Arc::new(FakeTransport::new().on(
         Method::POST,
-        "/api/v1/repos/perf3ct/fjo/pulls",
+        "/api/v1/repos/perf3ct/fcli/pulls",
         // No bracketed list, so `scopes_in_message` finds nothing and the scope has to come from
         // the request itself. Forgejo answers exactly this way when the route's own permission
         // check fails rather than the token middleware's.
@@ -409,7 +409,7 @@ async fn a_403_names_the_scope_codegen_recorded_not_the_one_inferred_from_the_pa
         title: Some("hi".to_owned()),
         ..Default::default()
     };
-    let e = api(fake).repo().create_pull_request("perf3ct", "fjo", &body).await.unwrap_err();
+    let e = api(fake).repo().create_pull_request("perf3ct", "fcli", &body).await.unwrap_err();
 
     let ErrorKind::InsufficientScope { needed, .. } = e.kind() else {
         panic!("expected InsufficientScope, got {:?}", e.kind());
@@ -419,7 +419,7 @@ async fn a_403_names_the_scope_codegen_recorded_not_the_one_inferred_from_the_pa
     // The discriminating half: the same route, classified without the request's scope, produces
     // a *different* answer. Without this the test would pass on an inferred scope too.
     assert_eq!(
-        infer_scope("POST", "/api/v1/repos/perf3ct/fjo/pulls").map(|s| s.to_string()),
+        infer_scope("POST", "/api/v1/repos/perf3ct/fcli/pulls").map(|s| s.to_string()),
         Some("write:issue".to_owned()),
         "inference must still disagree here, or this test proves nothing",
     );
@@ -431,13 +431,13 @@ async fn a_403_names_the_scope_codegen_recorded_not_the_one_inferred_from_the_pa
 async fn a_paginated_call_site_carries_its_scope_too() {
     let fake = Arc::new(FakeTransport::new().on(
         Method::GET,
-        "/api/v1/repos/perf3ct/fjo/pulls",
+        "/api/v1/repos/perf3ct/fcli/pulls",
         Canned::json(403, r#"{"message":"token does not have sufficient scope"}"#),
     ));
     let q = query::RepoListPullRequestsQuery::default();
     let e = api(fake)
         .repo()
-        .list_pull_requests_page("perf3ct", "fjo", &q, Paging::default())
+        .list_pull_requests_page("perf3ct", "fcli", &q, Paging::default())
         .await
         .unwrap_err();
 
@@ -456,14 +456,14 @@ async fn a_paginated_call_site_carries_its_scope_too() {
 async fn a_403_that_is_not_about_scopes_stays_forbidden_even_though_the_scope_is_known() {
     let fake = Arc::new(FakeTransport::new().on(
         Method::POST,
-        "/api/v1/repos/perf3ct/fjo/pulls",
+        "/api/v1/repos/perf3ct/fcli/pulls",
         Canned::json(403, r#"{"message":"user is not a collaborator on this repository"}"#),
     ));
     let body = forgejo_client::forgejo_model::CreatePullRequestOption {
         title: Some("hi".to_owned()),
         ..Default::default()
     };
-    let e = api(fake).repo().create_pull_request("perf3ct", "fjo", &body).await.unwrap_err();
+    let e = api(fake).repo().create_pull_request("perf3ct", "fcli", &body).await.unwrap_err();
     let ErrorKind::Forbidden { server_message } = e.kind() else {
         panic!("expected Forbidden, got {:?}", e.kind());
     };
@@ -476,7 +476,7 @@ async fn a_403_that_is_not_about_scopes_stays_forbidden_even_though_the_scope_is
 async fn a_scope_the_server_names_beats_the_one_the_request_carries() {
     let fake = Arc::new(FakeTransport::new().on(
         Method::POST,
-        "/api/v1/repos/perf3ct/fjo/pulls",
+        "/api/v1/repos/perf3ct/fcli/pulls",
         Canned::json(
             403,
             r#"{"message":"token does not have at least one of required scope(s): [write:issue]"}"#,
@@ -486,7 +486,7 @@ async fn a_scope_the_server_names_beats_the_one_the_request_carries() {
         title: Some("hi".to_owned()),
         ..Default::default()
     };
-    let e = api(fake).repo().create_pull_request("perf3ct", "fjo", &body).await.unwrap_err();
+    let e = api(fake).repo().create_pull_request("perf3ct", "fcli", &body).await.unwrap_err();
     let ErrorKind::InsufficientScope { needed, .. } = e.kind() else {
         panic!("expected InsufficientScope, got {:?}", e.kind());
     };

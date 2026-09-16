@@ -1,4 +1,4 @@
-//! `xtask` — the fjo generator and repository tooling.
+//! `xtask` — the fcli generator and repository tooling.
 //!
 //! Never a dependency of the binary. Everything here runs on a developer's machine or in CI,
 //! which is why it is allowed to shell out to `curl` instead of pulling an HTTP stack into the
@@ -69,7 +69,7 @@ pub fn workspace_root() -> PathBuf {
 }
 
 #[derive(Parser)]
-#[command(name = "xtask", about = "fjo generator and repository tooling", version)]
+#[command(name = "xtask", about = "fcli generator and repository tooling", version)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,

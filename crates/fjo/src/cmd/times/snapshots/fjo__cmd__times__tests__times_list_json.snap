@@ -1,5 +1,0 @@
----
-source: crates/fjo/src/cmd/times/mod.rs
-expression: "testing::as_json(Fields::Generated(forgejo_client::fields::FIELDS_TRACKED_TIME),\n\"id,time,user_name\", value)"
----
-[{"id":7,"time":5100,"user_name":"alice"},{"id":8,"time":900,"user_name":"bob"}]

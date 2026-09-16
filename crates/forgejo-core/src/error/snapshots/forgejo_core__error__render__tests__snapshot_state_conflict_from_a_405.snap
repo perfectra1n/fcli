@@ -4,12 +4,12 @@ expression: "snap(ErrorKind::StateConflict\n{\n    resource: Some(\"pull request
 ---
 error: operation unavailable in the current state of pull request 4212
 
-  request:     POST /api/v1/repos/perf3ct/fjo/pulls/4212/merge
+  request:     POST /api/v1/repos/perf3ct/fcli/pulls/4212/merge
   resource:    pull request 4212
   server says: The head branch is behind the base branch
 
 what to do:
   the current state prevents this operation. Check the server message above.
-  1. fjo api -X POST repos/perf3ct/fjo/pulls/4212/merge  (read the current state)
+  1. fcli api -X POST repos/perf3ct/fcli/pulls/4212/merge  (read the current state)
   2. resolve the reported state conflict, then retry
   note: changing token scopes does not resolve a state conflict.

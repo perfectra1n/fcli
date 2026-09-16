@@ -39,7 +39,7 @@ impl GitCli {
         }
         cmd.args(argv)
             // Do not take index.lock for a read: it races with an editor's background
-            // `git status` and can make an `fjo` invocation fail for no reason. Harmless on a
+            // `git status` and can make an `fcli` invocation fail for no reason. Harmless on a
             // write, which takes the locks it actually needs explicitly.
             .env("GIT_OPTIONAL_LOCKS", "0")
             .env("GIT_PAGER", "cat")

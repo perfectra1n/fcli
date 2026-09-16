@@ -1,14 +1,14 @@
 ---
 source: crates/forgejo-core/src/error/render.rs
-expression: "snap(ErrorKind::Archived\n{ slug: \"perf3ct/fjo\".into(), host: \"git.example.org\".into() }, c)"
+expression: "snap(ErrorKind::Archived\n{ slug: \"perf3ct/fcli\".into(), host: \"git.example.org\".into() }, c)"
 ---
-error: perf3ct/fjo is archived and read-only (HTTP 423)
+error: perf3ct/fcli is archived and read-only (HTTP 423)
 
-  request:    POST /api/v1/repos/perf3ct/fjo/issues
-  repository: perf3ct/fjo
+  request:    POST /api/v1/repos/perf3ct/fcli/issues
+  repository: perf3ct/fcli
 
 what to do:
   archived repositories are read-only.
-  1. unarchive it at https://git.example.org/perf3ct/fjo/settings
+  1. unarchive it at https://git.example.org/perf3ct/fcli/settings
   2. then run the command again
-  reads still work: fjo issue list -R perf3ct/fjo
+  reads still work: fcli issue list -R perf3ct/fcli

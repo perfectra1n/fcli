@@ -16,7 +16,7 @@ fn is_opaque(kind: &FieldKind) -> bool {
         _ => false,
     }
 }
-/// `fjo` binary-searches `OP_FIELDS`. Unsorted, bare `--json` reports "no such
+/// `fcli` binary-searches `OP_FIELDS`. Unsorted, bare `--json` reports "no such
 /// operation" for roughly half the API while the operation itself works fine.
 #[test]
 fn op_fields_is_sorted_by_op_id() {

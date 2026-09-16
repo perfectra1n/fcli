@@ -6,7 +6,7 @@
 //! several gigabytes.
 //!
 //! So nothing here reads a file into memory. Bodies stream from disk through
-//! `tokio_util::io::ReaderStream` in 8 KB chunks, which keeps `fjo release create v1 ./big.iso`
+//! `tokio_util::io::ReaderStream` in 8 KB chunks, which keeps `fcli release create v1 ./big.iso`
 //! at a flat few hundred kilobytes of RSS instead of the file's size. The obvious alternative —
 //! `Part::bytes(fs::read(path)?)` — works perfectly on every test fixture and then gets a
 //! bug report about a 2 GB upload being OOM-killed.
@@ -57,7 +57,7 @@ impl Part {
         Self { name: name.into(), filename: None, mime: None, src: Source::Bytes(data.into()) }
     }
 
-    /// A part read from stdin, for `fjo release create v1 -` style piping.
+    /// A part read from stdin, for `fcli release create v1 -` style piping.
     ///
     /// A filename is mandatory here in practice: there is no path to derive one from, and
     /// Forgejo rejects an attachment with no name.
@@ -303,8 +303,8 @@ mod tests {
 
     #[test]
     fn a_file_part_defaults_its_name_to_the_basename() {
-        let p = Part::file("attachment", "/tmp/dist/fjo-v1.2.3.tar.gz");
-        assert_eq!(p.filename.as_deref(), Some("fjo-v1.2.3.tar.gz"));
+        let p = Part::file("attachment", "/tmp/dist/fcli-v1.2.3.tar.gz");
+        assert_eq!(p.filename.as_deref(), Some("fcli-v1.2.3.tar.gz"));
         assert_eq!(p.name, "attachment");
     }
 

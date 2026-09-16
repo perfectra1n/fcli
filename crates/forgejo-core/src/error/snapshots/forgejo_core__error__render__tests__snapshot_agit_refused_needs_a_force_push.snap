@@ -11,6 +11,6 @@ error: the AGit push to HEAD:refs/for/main/fix-parser was refused
 what to do:
   amended or rebased commits require a force push to update the AGit pull
   request.
-  1. fjo pr create --agit --force-push
+  1. fcli pr create --agit --force-push
   note: keep the same topic to update this pull request; a new topic
         creates another.

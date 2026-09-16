@@ -8,7 +8,7 @@
 //! shows up, because these are payloads, not derivations.
 //!
 //! Each test names the bug it prevents. The single highest-value assertion in the file is
-//! [`go_zero_time_on_an_unmerged_pull_request_is_none`]: without it, `fjo pr list` prints
+//! [`go_zero_time_on_an_unmerged_pull_request_is_none`]: without it, `fcli pr list` prints
 //! "2025 years ago" in the merged column of every open pull request.
 
 use forgejo_model::{
@@ -46,8 +46,8 @@ const USER: &str = r#"{
 
 const REPOSITORY: &str = r#"{
   "id": 42,
-  "name": "fjo",
-  "full_name": "perf3ct/fjo",
+  "name": "fcli",
+  "full_name": "perf3ct/fcli",
   "description": "A Forgejo CLI",
   "empty": false,
   "private": false,
@@ -56,10 +56,10 @@ const REPOSITORY: &str = r#"{
   "mirror": false,
   "size": 1024,
   "language": "Rust",
-  "html_url": "https://git.example.org/perf3ct/fjo",
-  "url": "https://git.example.org/api/v1/repos/perf3ct/fjo",
-  "ssh_url": "git@git.example.org:perf3ct/fjo.git",
-  "clone_url": "https://git.example.org/perf3ct/fjo.git",
+  "html_url": "https://git.example.org/perf3ct/fcli",
+  "url": "https://git.example.org/api/v1/repos/perf3ct/fcli",
+  "ssh_url": "git@git.example.org:perf3ct/fcli.git",
+  "clone_url": "https://git.example.org/perf3ct/fcli.git",
   "default_branch": "main",
   "object_format_name": "sha256",
   "default_merge_style": "merge",
@@ -82,8 +82,8 @@ const REPOSITORY: &str = r#"{
   "internal_tracker": {"enable_time_tracker": true},
   "parent": {
     "id": 9,
-    "name": "fjo",
-    "full_name": "upstream/fjo",
+    "name": "fcli",
+    "full_name": "upstream/fcli",
     "owner": {"id": 2, "login": "upstream"}
   }
 }"#;
@@ -93,10 +93,10 @@ const REPOSITORY: &str = r#"{
 const PULL_REQUEST_OPEN: &str = r#"{
   "id": 4212,
   "number": 17,
-  "url": "https://git.example.org/perf3ct/fjo/pulls/17",
-  "html_url": "https://git.example.org/perf3ct/fjo/pulls/17",
-  "diff_url": "https://git.example.org/perf3ct/fjo/pulls/17.diff",
-  "patch_url": "https://git.example.org/perf3ct/fjo/pulls/17.patch",
+  "url": "https://git.example.org/perf3ct/fcli/pulls/17",
+  "html_url": "https://git.example.org/perf3ct/fcli/pulls/17",
+  "diff_url": "https://git.example.org/perf3ct/fcli/pulls/17.diff",
+  "patch_url": "https://git.example.org/perf3ct/fcli/pulls/17.patch",
   "state": "open",
   "title": "Add the models emitter",
   "body": "Closes #12",
@@ -127,8 +127,8 @@ const PULL_REQUEST_OPEN: &str = r#"{
 const ISSUE: &str = r#"{
   "id": 918273,
   "number": 12,
-  "url": "https://git.example.org/api/v1/repos/perf3ct/fjo/issues/12",
-  "html_url": "https://git.example.org/perf3ct/fjo/issues/12",
+  "url": "https://git.example.org/api/v1/repos/perf3ct/fcli/issues/12",
+  "html_url": "https://git.example.org/perf3ct/fcli/issues/12",
   "state": "closed",
   "title": "Timestamps render as 2025 years ago",
   "body": "Go zero time",
@@ -154,7 +154,7 @@ const LABEL: &str = r#"{
   "description": "New feature or request",
   "exclusive": false,
   "is_archived": false,
-  "url": "https://git.example.org/api/v1/repos/perf3ct/fjo/labels/3"
+  "url": "https://git.example.org/api/v1/repos/perf3ct/fcli/labels/3"
 }"#;
 
 const MILESTONE: &str = r#"{
@@ -176,11 +176,11 @@ const RELEASE: &str = r#"{
   "target_commitish": "main",
   "name": "v0.1.0",
   "body": "First release",
-  "url": "https://git.example.org/api/v1/repos/perf3ct/fjo/releases/77",
-  "html_url": "https://git.example.org/perf3ct/fjo/releases/tag/v0.1.0",
-  "tarball_url": "https://git.example.org/perf3ct/fjo/archive/v0.1.0.tar.gz",
-  "zipball_url": "https://git.example.org/perf3ct/fjo/archive/v0.1.0.zip",
-  "upload_url": "https://git.example.org/api/v1/repos/perf3ct/fjo/releases/77/assets",
+  "url": "https://git.example.org/api/v1/repos/perf3ct/fcli/releases/77",
+  "html_url": "https://git.example.org/perf3ct/fcli/releases/tag/v0.1.0",
+  "tarball_url": "https://git.example.org/perf3ct/fcli/archive/v0.1.0.tar.gz",
+  "zipball_url": "https://git.example.org/perf3ct/fcli/archive/v0.1.0.zip",
+  "upload_url": "https://git.example.org/api/v1/repos/perf3ct/fcli/releases/77/assets",
   "draft": false,
   "prerelease": false,
   "hide_archive_links": false,
@@ -191,7 +191,7 @@ const RELEASE: &str = r#"{
   "assets": [
     {
       "id": 8,
-      "name": "fjo-x86_64.tar.gz",
+      "name": "fcli-x86_64.tar.gz",
       "size": 4096,
       "download_count": 3,
       "type": "attachment",
@@ -205,8 +205,8 @@ const RELEASE: &str = r#"{
 const COMMENT: &str = r#"{
   "id": 555,
   "body": "Looks good",
-  "html_url": "https://git.example.org/perf3ct/fjo/issues/12#issuecomment-555",
-  "issue_url": "https://git.example.org/api/v1/repos/perf3ct/fjo/issues/12",
+  "html_url": "https://git.example.org/perf3ct/fcli/issues/12#issuecomment-555",
+  "issue_url": "https://git.example.org/api/v1/repos/perf3ct/fcli/issues/12",
   "pull_request_url": "",
   "original_author": "",
   "original_author_id": 0,
@@ -228,7 +228,7 @@ const BRANCH: &str = r#"{
   "commit": {
     "id": "6bf0f49",
     "message": "Add emitter plumbing",
-    "url": "https://git.example.org/perf3ct/fjo/commit/6bf0f49",
+    "url": "https://git.example.org/perf3ct/fcli/commit/6bf0f49",
     "timestamp": "2026-09-12T10:00:00Z",
     "added": [],
     "removed": [],
@@ -238,8 +238,8 @@ const BRANCH: &str = r#"{
 
 const COMMIT: &str = r#"{
   "sha": "6bf0f4900000000000000000000000000000000a",
-  "url": "https://git.example.org/api/v1/repos/perf3ct/fjo/git/commits/6bf0f49",
-  "html_url": "https://git.example.org/perf3ct/fjo/commit/6bf0f49",
+  "url": "https://git.example.org/api/v1/repos/perf3ct/fcli/git/commits/6bf0f49",
+  "html_url": "https://git.example.org/perf3ct/fcli/commit/6bf0f49",
   "created": "2026-09-12T10:00:00Z",
   "author": {"id": 1, "login": "perf3ct"},
   "committer": {"id": 1, "login": "perf3ct"},
@@ -295,12 +295,12 @@ const ACTION_RUN: &str = r#"{
   "stopped": "2026-09-12T10:01:37Z",
   "ScheduleID": 0,
   "trigger_user": {"id": 1, "login": "perf3ct"},
-  "repository": {"id": 42, "name": "fjo", "full_name": "perf3ct/fjo"}
+  "repository": {"id": 42, "name": "fcli", "full_name": "perf3ct/fcli"}
 }"#;
 
 const ATTACHMENT: &str = r#"{
   "id": 8,
-  "name": "fjo-x86_64.tar.gz",
+  "name": "fcli-x86_64.tar.gz",
   "size": 4096,
   "download_count": 3,
   "type": "attachment",
@@ -488,7 +488,7 @@ fn repository_parent_is_a_boxed_option() {
     let repo: Repository = serde_json::from_str(REPOSITORY).unwrap();
     let parent: Option<Box<Repository>> = repo.parent;
     let parent = parent.expect("the fixture has a parent");
-    assert_eq!(parent.full_name, "upstream/fjo");
+    assert_eq!(parent.full_name, "upstream/fcli");
     // And the recursion genuinely nests: a fork of a fork is representable.
     assert_eq!(parent.parent, None);
 }

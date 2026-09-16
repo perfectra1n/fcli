@@ -592,7 +592,7 @@ fn classify_404(sb: &ServerBody, path: &str, ctx: &ClassifyCtx) -> ErrorKind {
             // identifier in it to be wrong about. Carrying that empty id through as though it
             // were an object is what told a user creating a pull request that "that pull request
             // does not exist … the identifier is what is wrong", and sent them to
-            // `fjo pr list --state all` to look for the thing they were trying to make. The id
+            // `fcli pr list --state all` to look for the thing they were trying to make. The id
             // is left empty on purpose and the renderer reports the collection; `RouteNotFound`
             // would be wrong in the other direction, since both the repository and the endpoint
             // demonstrably exist.
@@ -611,7 +611,7 @@ fn classify_404(sb: &ServerBody, path: &str, ctx: &ClassifyCtx) -> ErrorKind {
             },
             // Nobody asked. These used to be the same variant *and* the same wording, so a 404
             // whose repository was never checked still announced "could not find the repository
-            // perf3ct/fjo" — an assertion on no evidence, which `server_message` then made
+            // perf3ct/fcli" — an assertion on no evidence, which `server_message` then made
             // visibly wrong by printing the server's contradicting sentence underneath it. The
             // variant is the same; `probed: false` is what stops the renderer claiming the
             // check happened.
@@ -912,7 +912,7 @@ mod tests {
         ClassifyCtx {
             host: "git.example.org".into(),
             method: "GET".into(),
-            path: "/api/v1/repos/perf3ct/fjo/pulls/4212".into(),
+            path: "/api/v1/repos/perf3ct/fcli/pulls/4212".into(),
             had_token: true,
             settings_url: "https://git.example.org/user/settings/applications".into(),
             ..ClassifyCtx::default()
@@ -1087,20 +1087,20 @@ mod tests {
             panic!("expected ResourceNotFound");
         };
         assert_eq!((kind, id.as_str()), ("pull request", "4212"));
-        assert_eq!(slug.as_deref(), Some("perf3ct/fjo"));
+        assert_eq!(slug.as_deref(), Some("perf3ct/fcli"));
         assert_eq!(server_message, None, "a bare `not found` only restates the status code");
     }
 
     // ------------------------------------------------- a 404 on a collection, and its body
     //
-    // Both defects that the live Forgejo 16.0.4 run turned up, as tests. `fjo pr create --head
+    // Both defects that the live Forgejo 16.0.4 run turned up, as tests. `fcli pr create --head
     // no-such-branch` is a `POST /repos/{o}/{r}/pulls`: the repository exists, the endpoint
     // exists, and the only thing that does not is a branch named in the request body.
 
     fn create_pull_ctx() -> ClassifyCtx {
         let mut c = ctx();
         c.method = "POST".into();
-        c.path = "/api/v1/repos/perf3ct/fjo/pulls".into();
+        c.path = "/api/v1/repos/perf3ct/fcli/pulls".into();
         c.repo_probe = RepoProbe::Exists;
         c
     }
@@ -1118,7 +1118,7 @@ mod tests {
         };
         assert_eq!(kind, "pull request");
         assert!(id.is_empty(), "the path named no pull request, so nothing in it can be wrong");
-        assert_eq!(slug.as_deref(), Some("perf3ct/fjo"));
+        assert_eq!(slug.as_deref(), Some("perf3ct/fcli"));
     }
 
     /// **Defect 2.** The body is the entire diagnosis, and the variant had nowhere to put it.
@@ -1171,7 +1171,7 @@ mod tests {
         else {
             panic!("expected RepoNotFound when the probe never ran");
         };
-        assert_eq!(slug, "perf3ct/fjo");
+        assert_eq!(slug, "perf3ct/fcli");
         assert_eq!(
             server_message.as_deref(),
             Some("could not find 'no-such-branch' to be a commit, branch or tag")
@@ -1184,14 +1184,14 @@ mod tests {
         // the transport.
         assert_eq!(
             probe_target(404, &c.path),
-            Some(("perf3ct".to_owned(), "fjo".to_owned())),
+            Some(("perf3ct".to_owned(), "fcli".to_owned())),
             "the disambiguation probe must still fire for a collection path"
         );
     }
 
     /// The end-to-end rendering of the real response from Forgejo 16.0.4. Before this change it
     /// read "that pull request does not exist … the identifier is what is wrong" and pointed at
-    /// `fjo pr list --state all`, for a create.
+    /// `fcli pr list --state all`, for a create.
     #[test]
     fn snapshot_404_post_to_a_collection_names_the_real_reason() {
         insta::assert_snapshot!(rendered(
@@ -1341,7 +1341,7 @@ mod tests {
     fn a_404_on_a_nested_file_names_the_whole_path() {
         let mut c = ctx();
         c.repo_probe = RepoProbe::Exists;
-        c.path = "/api/v1/repos/perf3ct/fjo/contents/src/main.rs".into();
+        c.path = "/api/v1/repos/perf3ct/fcli/contents/src/main.rs".into();
         let ErrorKind::ResourceNotFound { kind, id, .. } =
             classify(404, &json(), br#"{"message":"Not Found"}"#, &c)
         else {
@@ -1383,7 +1383,7 @@ mod tests {
         let ErrorKind::Archived { slug, .. } = classify(423, &json(), b"{}", &ctx()) else {
             panic!("expected Archived");
         };
-        assert_eq!(slug, "perf3ct/fjo");
+        assert_eq!(slug, "perf3ct/fcli");
     }
 
     #[test]
@@ -1404,7 +1404,7 @@ mod tests {
     fn topics_ctx() -> ClassifyCtx {
         let mut c = ctx();
         c.method = "PUT".into();
-        c.path = "/api/v1/repos/perf3ct/fjo/topics".into();
+        c.path = "/api/v1/repos/perf3ct/fcli/topics".into();
         c
     }
 
@@ -1498,7 +1498,7 @@ mod tests {
     fn snapshot_405_merge_refusal_keeps_the_reason() {
         let mut c = ctx();
         c.method = "POST".into();
-        c.path = "/api/v1/repos/perf3ct/fjo/pulls/4212/merge".into();
+        c.path = "/api/v1/repos/perf3ct/fcli/pulls/4212/merge".into();
         insta::assert_snapshot!(rendered(
             405,
             &json(),
@@ -1511,7 +1511,7 @@ mod tests {
     fn a_405_with_a_message_is_a_state_conflict_that_names_the_resource() {
         let mut c = ctx();
         c.method = "POST".into();
-        c.path = "/api/v1/repos/perf3ct/fjo/pulls/4212/merge".into();
+        c.path = "/api/v1/repos/perf3ct/fcli/pulls/4212/merge".into();
         let ErrorKind::StateConflict { resource, server_message, .. } =
             classify(405, &json(), br#"{"message":"the pull request is closed"}"#, &c)
         else {
@@ -1527,7 +1527,7 @@ mod tests {
     fn a_405_with_no_message_is_still_a_missing_route() {
         let mut c = ctx();
         c.method = "DELETE".into();
-        c.path = "/api/v1/repos/perf3ct/fjo/actions/runs/12".into();
+        c.path = "/api/v1/repos/perf3ct/fcli/actions/runs/12".into();
         assert!(matches!(classify(405, &json(), b"", &c), ErrorKind::RouteNotFound { .. }));
         assert!(matches!(
             classify(

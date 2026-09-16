@@ -1,13 +1,13 @@
 # The three layers
 
-`fjo` exposes the Forgejo API three times over. This is not redundancy — it is the mechanism
+`fcli` exposes the Forgejo API three times over. This is not redundancy — it is the mechanism
 that lets the tool claim complete coverage while still having a small, opinionated set of
 everyday commands.
 
 ```
-fjo <noun> <verb>        layer 3   hand-written porcelain   35 groups, 238 commands
-fjo raw <group> <op>     layer 2   generated                506 operations, all of them
-fjo api <path>           layer 1   generated from nothing   any path under /api/v1
+fcli <noun> <verb>        layer 3   hand-written porcelain   35 groups, 238 commands
+fcli raw <group> <op>     layer 2   generated                506 operations, all of them
+fcli api <path>           layer 1   generated from nothing   any path under /api/v1
 ```
 
 Layers 1 and 2 are complete by construction. Layer 3 is deliberately partial and always will be.
@@ -33,16 +33,16 @@ judgement call, and it fails loudly the moment `cargo xtask update-spec` pulls i
 
 Nobody writes 506 commands. Nobody has to.
 
-## Layer 1 — `fjo api`
+## Layer 1 — `fcli api`
 
 The escape hatch, modelled on `gh api`.
 
 ```bash
-fjo api version
-fjo api user --jq .login
-fjo api 'repos/{owner}/{repo}/pulls' --paginate --jq '.[].number'
-fjo api -X POST -f title=hi -F draft=true 'repos/{owner}/{repo}/issues'
-fjo api -i repos/myorg/myrepo
+fcli api version
+fcli api user --jq .login
+fcli api 'repos/{owner}/{repo}/pulls' --paginate --jq '.[].number'
+fcli api -X POST -f title=hi -F draft=true 'repos/{owner}/{repo}/issues'
+fcli api -i repos/myorg/myrepo
 ```
 
 - The endpoint is a path relative to `/api/v1`. A leading `/` is optional, and an `/api/v1`
@@ -57,33 +57,33 @@ fjo api -i repos/myorg/myrepo
 **Reach for it when** the endpoint is newer than the vendored spec, you want the response
 untouched, or you are transcribing a `curl` out of Forgejo's documentation.
 
-## Layer 2 — `fjo raw <group> <op>`
+## Layer 2 — `fcli raw <group> <op>`
 
 Every operation the specification describes, as a command, with typed flags derived from the
 same `Param` values the client's function signatures are derived from.
 
 ```bash
-fjo raw --help                               # 17 groups
-fjo raw repo --help                          # the operations in one group
-fjo raw search pull request                  # rank the metadata table by name, summary and path
+fcli raw --help                               # 17 groups
+fcli raw repo --help                          # the operations in one group
+fcli raw search pull request                  # rank the metadata table by name, summary and path
 ```
 
 The groups are `activitypub`, `admin`, `artifact`, `git`, `issue`, `misc`, `notify`, `org`,
 `package`, `repo`, `run`, `settings`, `task`, `team`, `topic`, `user`, `workflow` — plus
-`fjo raw search`.
+`fcli raw search`.
 
 Each operation's `--help` states the real HTTP method and path, the token scope, and the request
 body type:
 
 ```console
-$ fjo raw repo create-pull-request --help
+$ fcli raw repo create-pull-request --help
 Create a pull request
 
 HTTP: POST /repos/{owner}/{repo}/pulls
 token scope: write:repository
 request body: CreatePullRequestOption (application/json, optional)
 
-Usage: fjo raw repo create-pull-request [OPTIONS] [OWNER] [REPO]
+Usage: fcli raw repo create-pull-request [OPTIONS] [OWNER] [REPO]
 ```
 
 ### Path parameters, positionally or as flags
@@ -93,8 +93,8 @@ with precedence *flag > positional > repository context > error*. Giving both wi
 values is a specific error, not clap's baffling "unexpected argument".
 
 ```bash
-fjo raw repo list-branches myorg myrepo
-fjo raw repo list-branches --owner myorg --repo myrepo
+fcli raw repo list-branches myorg myrepo
+fcli raw repo list-branches --owner myorg --repo myrepo
 ```
 
 When an operation's own path parameter is named `repo`, it takes the long `--repo` and the
@@ -108,10 +108,10 @@ is excluded from the flags and `--help` says so; supply it with `--body-file` an
 override individual fields.
 
 ```bash
-fjo raw repo create-pull-request myorg myrepo --title t --head fix --base main
-fjo raw repo create-pull-request myorg myrepo --body-file ./pr.json --title "override"
+fcli raw repo create-pull-request myorg myrepo --title t --head fix --base main
+fcli raw repo create-pull-request myorg myrepo --body-file ./pr.json --title "override"
 echo '{"title":"t","head":"fix","base":"main"}' \
-  | fjo raw repo create-pull-request myorg myrepo --body-file -
+  | fcli raw repo create-pull-request myorg myrepo --body-file -
 ```
 
 ### `--dry-run`
@@ -120,7 +120,7 @@ Assembles the request and prints it without sending. It needs no token and no ne
 makes the whole generated layer inspectable offline:
 
 ```console
-$ fjo raw repo create-pull-request myorg myrepo \
+$ fcli raw repo create-pull-request myorg myrepo \
     --title "Fix typo" --head fix --base main --dry-run
 POST /repos/myorg/myrepo/pulls
 content-type: application/json
@@ -138,7 +138,7 @@ allowlist — `filepath`, `treePath`, `ref`, `path`, `filename` — preserve `/`
 rather than 404ing:
 
 ```bash
-fjo raw repo get-contents myorg myrepo src/main.rs
+fcli raw repo get-contents myorg myrepo src/main.rs
 ```
 
 **Reach for it when** the porcelain has no command for what you need. That is most of the API,
@@ -157,7 +157,7 @@ A command belongs here only if it is *nicer* than layer 2 — which means at lea
   terminals;
 - **human rendering** — a table or detail view materially better than pretty-printed JSON.
 
-A porcelain command that is merely a renamed `fjo raw` call is not worth its maintenance. The
+A porcelain command that is merely a renamed `fcli raw` call is not worth its maintenance. The
 binding rules are in [porcelain-conventions.md](porcelain-conventions.md).
 
 **Reach for it** first, for anything it covers.
@@ -167,7 +167,7 @@ binding rules are in [porcelain-conventions.md](porcelain-conventions.md).
 This is the property the layering exists to buy, and it is worth being concrete about, because
 the two most obvious gaps in the command list are gaps for completely different reasons.
 
-### `fjo admin badge` — the API has no badge route
+### `fcli admin badge` — the API has no badge route
 
 `spec/forgejo-v16.0.4.json` contains the string `badge` zero times:
 
@@ -176,23 +176,23 @@ $ grep -c badge spec/forgejo-v16.0.4.json
 0
 ```
 
-There is no endpoint, so there is nothing for any layer to call. `crates/fjo/src/cmd/admin/mod.rs`
+There is no endpoint, so there is nothing for any layer to call. `crates/fcli/src/cmd/admin/mod.rs`
 says so in prose. If a future Forgejo adds badge routes, `cargo xtask update-spec` makes them
-`fjo raw` commands on the day the spec is bumped, and `fjo raw search badge` will find them
+`fcli raw` commands on the day the spec is bumped, and `fcli raw search badge` will find them
 before any porcelain does.
 
-### `fjo git-hook` — a gap that cost nothing, and how it closed
+### `fcli git-hook` — a gap that cost nothing, and how it closed
 
 Four operations exist in the spec — `repoListGitHooks`, `repoGetGitHook`, `repoEditGitHook`,
 `repoDeleteGitHook` — and for several waves no porcelain was written for them. All four were
 reachable the entire time:
 
 ```bash
-fjo raw repo list-git-hooks myorg myrepo
-fjo raw repo get-git-hook myorg myrepo pre-receive
-fjo raw repo edit-git-hook myorg myrepo pre-receive --content '#!/bin/sh
+fcli raw repo list-git-hooks myorg myrepo
+fcli raw repo get-git-hook myorg myrepo pre-receive
+fcli raw repo edit-git-hook myorg myrepo pre-receive --content '#!/bin/sh
 exit 0'
-fjo raw repo delete-git-hook myorg myrepo pre-receive
+fcli raw repo delete-git-hook myorg myrepo pre-receive
 ```
 
 That is the designed failure mode: a missing convenience, with the capability already in your
@@ -202,18 +202,18 @@ the same sentence.
 Layer 3 has since caught up, and the shape of what it added is the argument for the layering:
 
 ```bash
-fjo git-hook list                            # which hooks are active, in the current repo
-fjo git-hook view pre-receive > hook.sh      # the script, verbatim — a table would flatten it
-fjo git-hook edit pre-receive -F hook.sh     # or -F - for stdin, or -e for $EDITOR
-fjo git-hook disable pre-receive
+fcli git-hook list                            # which hooks are active, in the current repo
+fcli git-hook view pre-receive > hook.sh      # the script, verbatim — a table would flatten it
+fcli git-hook edit pre-receive -F hook.sh     # or -F - for stdin, or -e for $EDITOR
+fcli git-hook disable pre-receive
 ```
 
 Every one of those is something layer 2 cannot do well: infer the repository, print a multi-line
 script without mangling it, read a script from a file or a pipe. And one of them is a *correction*
-— there is no `fjo git-hook delete`, because the API's `DELETE` does not remove a hook. Forgejo's
+— there is no `fcli git-hook delete`, because the API's `DELETE` does not remove a hook. Forgejo's
 git hooks are a fixed set (`pre-receive`, `update`, `post-receive`) that every repository always
 has; the route empties the script and leaves the hook listed as inactive. Layer 2 reports the
-route's own name, faithfully; layer 3 is where it gets a name that is true. `fjo git-hook delete`
+route's own name, faithfully; layer 3 is where it gets a name that is true. `fcli git-hook delete`
 is accepted, hidden, purely so it can say that.
 
 ## One `--jq` expression, three layers
@@ -222,9 +222,9 @@ Field names are the API's own snake_case at every layer, with no translation any
 what makes this true:
 
 ```bash
-fjo api 'repos/{owner}/{repo}/pulls' --jq '.[].head.ref'
-fjo raw repo list-pull-requests myorg myrepo --jq '.[].head.ref'
-fjo pr list --json head --jq '.[].head.ref'
+fcli api 'repos/{owner}/{repo}/pulls' --jq '.[].head.ref'
+fcli raw repo list-pull-requests myorg myrepo --jq '.[].head.ref'
+fcli pr list --json head --jq '.[].head.ref'
 ```
 
 Under `gh`'s camelCase, layer 1 would pass `head_repo` through untouched while layers 2 and 3

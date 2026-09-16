@@ -50,7 +50,7 @@ use crate::types::Scope;
 /// * ports 80 and 443 are dropped, since `host:443` and `host` are the same instance, while
 ///   `host:3000` is a different one and must be kept;
 /// * a trailing `api/v1` is dropped, because pasting the API base URL into
-///   `fjo auth login --host` is the single most common way to get this wrong.
+///   `fcli auth login --host` is the single most common way to get this wrong.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct HostKey(String);
 
@@ -200,7 +200,7 @@ pub struct Login {
     ///
     /// Forgejo does not report a token's scopes over the API, so this is the only way an
     /// `InsufficientScope` error can say `token has: read:repository` instead of
-    /// `unknown`. It is advisory: a token created outside `fjo` has no record here.
+    /// `unknown`. It is advisory: a token created outside `fcli` has no record here.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scopes: Vec<Scope>,
 }
@@ -353,7 +353,7 @@ impl Hosts {
     }
 
     /// A missing file means "no hosts configured yet", not an error — the remedy for that
-    /// is `fjo auth login`, which the [`ErrorKind::NoHostConfigured`] renderer prints.
+    /// is `fcli auth login`, which the [`ErrorKind::NoHostConfigured`] renderer prints.
     pub fn load_at(path: &Path) -> Result<Self> {
         let mut warnings = Vec::new();
         let data = match std::fs::read_to_string(path) {
@@ -422,7 +422,7 @@ impl Hosts {
     ///
     /// Because the write goes through a fresh 0600 temporary file plus `rename`, any save
     /// also *repairs* a file that had been left group- or world-readable — so the warning
-    /// from [`Hosts::warnings`] has a one-command remedy (`fjo auth switch`, or any command
+    /// from [`Hosts::warnings`] has a one-command remedy (`fcli auth switch`, or any command
     /// that touches the file).
     pub fn save(&mut self) -> Result<()> {
         let text = toml::to_string_pretty(&self.data)
@@ -603,7 +603,7 @@ impl Hosts {
             return match host.login(u) {
                 Some(l) => Ok(l.user.clone()),
                 None => Err(Error::new(ErrorKind::Usage(format!(
-                    "no login {u:?} on {key}; run `fjo auth login --host {key}`"
+                    "no login {u:?} on {key}; run `fcli auth login --host {key}`"
                 )))),
             };
         }
@@ -620,11 +620,11 @@ impl Hosts {
 
     // -------------------------------------------------------------------------- resolve
 
-    /// The effective host: `--host` → `$FJO_HOST` → `$FORGEJO_HOST` → `active` → the only
+    /// The effective host: `--host` → `$FCLI_HOST` → `$FORGEJO_HOST` → `active` → the only
     /// configured host.
     ///
-    /// `$FJO_HOST` is accepted alongside `$FORGEJO_HOST` for consistency with the
-    /// `FJO_*`-then-`FORGEJO_*` pattern used for `FJO_TOKEN` and `FJO_REPO`.
+    /// `$FCLI_HOST` is accepted alongside `$FORGEJO_HOST` for consistency with the
+    /// `FCLI_*`-then-`FORGEJO_*` pattern used for `FCLI_TOKEN` and `FCLI_REPO`.
     ///
     /// Falling back to the sole configured host when `active` is unset is safe precisely
     /// because it is unambiguous; with two or more hosts we refuse rather than guess, since
@@ -632,7 +632,7 @@ impl Hosts {
     pub fn resolve_host(&self, flag: Option<&str>, env: &dyn Env) -> Result<HostKey> {
         let given = flag
             .map(str::to_owned)
-            .or_else(|| env.get("FJO_HOST"))
+            .or_else(|| env.get("FCLI_HOST"))
             .or_else(|| env.get("FORGEJO_HOST"));
 
         if let Some(given) = given {
@@ -657,12 +657,12 @@ impl Hosts {
     /// configuration file at all:
     ///
     /// ```text
-    /// FORGEJO_HOST=git.example.org FORGEJO_TOKEN=... fjo api user
+    /// FORGEJO_HOST=git.example.org FORGEJO_TOKEN=... fcli api user
     /// ```
     ///
     /// `gh` supports exactly this via `GH_HOST` + `GH_TOKEN`, and it is how nearly every CI job
     /// authenticates. Without it, talking to a host named on the command line would first
-    /// require `fjo auth login` to write a credential file inside a throwaway container —
+    /// require `fcli auth login` to write a credential file inside a throwaway container —
     /// which is both absurd and, on a container with no keyring, another failure to explain.
     ///
     /// Two deliberate limits:
@@ -675,7 +675,7 @@ impl Hosts {
     pub fn adopt_env_host(&mut self, flag: Option<&str>, env: &dyn Env) -> Result<Option<HostKey>> {
         let Some(given) = flag
             .map(str::to_owned)
-            .or_else(|| env.get("FJO_HOST"))
+            .or_else(|| env.get("FCLI_HOST"))
             .or_else(|| env.get("FORGEJO_HOST"))
         else {
             return Ok(None);
@@ -946,7 +946,7 @@ mod tests {
     fn the_ci_pattern_works_with_no_config_file() {
         // FORGEJO_HOST + FORGEJO_TOKEN and nothing else must work. `gh` supports exactly this
         // via GH_HOST + GH_TOKEN, and it is how nearly every CI job authenticates. Requiring
-        // `fjo auth login` first would mean writing a credential file inside a throwaway
+        // `fcli auth login` first would mean writing a credential file inside a throwaway
         // container just to talk to a host we were handed on the command line.
         use super::super::MapEnv;
         let dir = tempfile::tempdir().unwrap();

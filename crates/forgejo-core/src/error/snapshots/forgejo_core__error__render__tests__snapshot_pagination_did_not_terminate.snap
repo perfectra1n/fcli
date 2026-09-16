@@ -4,7 +4,7 @@ expression: "snap(ErrorKind::PaginationDidNotTerminate { pages: 10_000, items: 5
 ---
 error: pagination stopped after 10000 pages without reaching the end
 
-  request:       GET /api/v1/repos/perf3ct/fjo/issues
+  request:       GET /api/v1/repos/perf3ct/fcli/issues
   pages fetched: 10000
   items so far:  500000
 
@@ -12,7 +12,7 @@ what to do:
   the page limit was reached before the server indicated the end of the results.
   check whether the server ignores ?page or a proxy strips the Link and
   X-Total-Count headers.
-  1. inspect the response headers: fjo api repos/perf3ct/fjo/issues -i
-  2. request a limited number of items: fjo api repos/perf3ct/fjo/issues --limit 500
+  1. inspect the response headers: fcli api repos/perf3ct/fcli/issues -i
+  2. request a limited number of items: fcli api repos/perf3ct/fcli/issues --limit 500
   3. report unexpected pagination behavior to the server or proxy administrator
   note: the request failed because the result may be incomplete.

@@ -4,7 +4,7 @@ expression: "snap(ErrorKind::RateLimited\n{\n    host: \"git.example.org\".into(
 ---
 error: rate limit reached on git.example.org (HTTP 429)
 
-  request:     POST /api/v1/repos/perf3ct/fjo/issues
+  request:     POST /api/v1/repos/perf3ct/fcli/issues
   host:        git.example.org
   retry after: 30s (reported by the server)
 

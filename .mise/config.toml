@@ -1,4 +1,4 @@
-# mise tasks + tooling for fjo. `mise tasks` lists them; `mise run <task>`.
+# mise tasks + tooling for fcli. `mise tasks` lists them; `mise run <task>`.
 # Mise is the source of truth for tools and tasks in developer shells AND in CI:
 # .gitea/workflows/ci.yml invokes `mise run <task>` rather than restating the
 # commands, so the two cannot drift. Change a gate here and CI follows.
@@ -49,13 +49,13 @@ set -eu
 # kills it. Profiles and timeout values: .config/nextest.toml.
 #
 # This task is now genuinely hermetic, which it was not before: the nextest
-# default profile filters out `fjo-itest`, whose harness shares one Forgejo
+# default profile filters out `fcli-itest`, whose harness shares one Forgejo
 # container per PROCESS (and reaps every other one on boot), so under nextest
 # it would boot — and mutually destroy — one container per test. They did not
 # stop running: `mise run itest` runs them on the process model they were
 # written for, and CI's `integration` job already did exactly that.
 cargo nextest run --workspace --locked
-echo "note: the crates/fjo-itest integration tests are not in this gate; run 'mise run itest' (needs Docker)."
+echo "note: the crates/fcli-itest integration tests are not in this gate; run 'mise run itest' (needs Docker)."
 """
 
 [tasks.test-doc]
@@ -146,7 +146,7 @@ set -eu
 # RATCHET: `unwrap()` / `expect(` / `panic!` / `todo!` / `unimplemented!` in
 # non-test, non-generated code under crates/ must never GROW.
 #
-# fjo's entire value proposition is its error taxonomy: one renderer, a
+# fcli's entire value proposition is its error taxonomy: one renderer, a
 # three-part shape (what failed / why / what to do), and a test asserting that
 # EVERY ErrorKind variant's rendering contains a "what to do" section with a
 # literal runnable command. A panic bypasses all of it and hands the user a Rust
@@ -159,7 +159,7 @@ set -eu
 # `.mise/scan.py` scrubs comments and string literals first (so a doc-comment
 # example is not counted as code) and excludes `generated/`, `tests/`
 # directories, `#[cfg(test)]` items, `#[cfg(test)] mod x;` file-modules, and the
-# `fjo-itest` crate — a `publish = false` container harness whose unwraps fail a
+# `fcli-itest` crate — a `publish = false` container harness whose unwraps fail a
 # test loudly, which is what you want there. See docs/ratchets.md.
 BUDGET=43
 COUNT=$(python3 .mise/scan.py panic)
@@ -180,7 +180,7 @@ fi
 description = "Ratchet gate: fail if std::process::exit is called outside main.rs"
 run = '''
 set -eu
-# RATCHET: calls to `std::process::exit` outside crates/fjo/src/main.rs must
+# RATCHET: calls to `std::process::exit` outside crates/fcli/src/main.rs must
 # never GROW, and the target is zero.
 #
 # main.rs owns the exit code because the ErrorKind exit-code table is a public
@@ -190,7 +190,7 @@ set -eu
 # the one the taxonomy documents — and because it never unwinds, it also skips
 # the pager flush and the grouped unknown-field note on the way out.
 #
-# It reached zero the hard way: crates/fjo/src/cmd/pr/checks.rs (Verdict::Failed)
+# It reached zero the hard way: crates/fcli/src/cmd/pr/checks.rs (Verdict::Failed)
 # was the last such call and is now an ErrorKind, so the budget is 0 and this is
 # a "stays drained" gate rather than a "drain it" one. The exit code for a failed
 # check run is decided in the same table as every other exit code.
@@ -212,7 +212,7 @@ fi
 description = "Ratchet gate: fail if more non-admin modules reach into cmd/admin/support"
 run = '''
 set -eu
-# RATCHET: files outside crates/fjo/src/cmd/admin/ that import
+# RATCHET: files outside crates/fcli/src/cmd/admin/ that import
 # `crate::cmd::admin::support` must never GROW, and the target is ZERO.
 #
 # `support` is general-purpose output plumbing (Emit/Json and the test helpers)
@@ -225,7 +225,7 @@ set -eu
 # The cause was mechanical, not a design choice: cmd/mod.rs was frozen while six
 # agents worked in parallel, so nobody could add a shared module without
 # colliding, and the nearest already-existing home won. Eleven modules ended up
-# reaching in; the plumbing now lives at crates/fjo/src/cmd/support/ and the
+# reaching in; the plumbing now lives at crates/fcli/src/cmd/support/ and the
 # count is 0. This gate exists so the next frozen-file scramble cannot quietly
 # recreate the same edge.
 BUDGET=0
@@ -258,7 +258,7 @@ set -eu
 # `Some(x.unwrap_or_default())` hands the model the exact zero value the
 # `Option` existed to omit, and the overwrite comes straight back.
 #
-# The live symptom was `fjo repo fork` answering `500 name is empty`: the call
+# The live symptom was `fcli repo fork` answering `500 name is empty`: the call
 # site turned "no --fork-name" into `Some("")`. It was 14 files and ~40 call
 # sites, and NO test caught it, because none could — `FakeTransport` accepts any
 # body, so only an assertion on the SHAPE of the request (`sent.get("name")
@@ -346,7 +346,7 @@ set -eu
 # Layer 2 binds ~506 operations with clap's BUILDER api over a `const` table and
 # builds each subtree LAZILY, precisely because clap's derive path would
 # construct all ~3,000 args on every single invocation — including
-# `fjo --version`, which needs none of them. That decision is invisible in the
+# `fcli --version`, which needs none of them. That decision is invisible in the
 # source: nothing stops someone reintroducing an eager build, and nothing would
 # fail except the clock. These budgets are how it fails.
 #
@@ -383,7 +383,7 @@ VERSION_BUDGET_MS=25
 HELP_BUDGET_MS=40
 SIZE_BUDGET=12582912   # 12 MiB; measured 12198872, so ~384 KiB of headroom
 
-BIN=target/release/fjo
+BIN=target/release/fcli
 CSV=$(mktemp)
 trap 'rm -f "$CSV"' EXIT
 fail=0
@@ -406,8 +406,8 @@ bench() { # <label> <budget-ms> <command line>
   fi
 }
 
-bench 'fjo --version'      "$VERSION_BUDGET_MS" "$BIN --version"
-bench 'fjo raw ... --help' "$HELP_BUDGET_MS"    "$BIN raw repo create-pull-request --help"
+bench 'fcli --version'      "$VERSION_BUDGET_MS" "$BIN --version"
+bench 'fcli raw ... --help' "$HELP_BUDGET_MS"    "$BIN raw repo create-pull-request --help"
 
 bytes=$(stat -c%s "$BIN")
 printf '==> %-26s %8s bytes (budget %s)\n' 'release binary' "$bytes" "$SIZE_BUDGET"

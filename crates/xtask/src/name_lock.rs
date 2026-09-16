@@ -3,7 +3,7 @@
 //! Every operation's `(group, command, fn)` triple is committed. Lowering compares against the
 //! lock and **hard-errors on any change** unless a human passes `--accept-renames`.
 //!
-//! The failure this prevents is specific and expensive. `fjo raw repo create-pull-request` is
+//! The failure this prevents is specific and expensive. `fcli raw repo create-pull-request` is
 //! a name users put in scripts and CI. Its spelling is derived mechanically from an
 //! `operationId`, so a Forgejo release that renames `repoCreatePullRequest` — or that adds an
 //! operation whose name collides and forces a rename — would silently change the CLI's surface
@@ -47,7 +47,7 @@ pub struct Entry {
 
 impl Entry {
     fn invocation(&self) -> String {
-        format!("fjo raw {} {}", self.group, self.command)
+        format!("fcli raw {} {}", self.group, self.command)
     }
 }
 
@@ -247,7 +247,7 @@ mod tests {
         // The error message has to be recognisable to someone whose script just broke.
         assert_eq!(
             entry("repo", "create-pull-request", "x").invocation(),
-            "fjo raw repo create-pull-request"
+            "fcli raw repo create-pull-request"
         );
     }
 }
