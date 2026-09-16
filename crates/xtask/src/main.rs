@@ -41,6 +41,7 @@ mod itest;
 mod name_lock;
 mod overrides;
 mod spec;
+mod spec_diff;
 mod stats;
 mod swagger;
 mod update_spec;
@@ -48,7 +49,7 @@ mod update_spec;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::{ArgAction, Parser, Subcommand};
+use clap::{ArgAction, Args, Parser, Subcommand};
 
 /// Errors here only ever reach a developer's terminal, so a boxed message beats a taxonomy.
 /// `forgejo-core`'s [`Error`](../forgejo_core/error/struct.Error.html) exists because *users*
@@ -85,6 +86,23 @@ enum Cmd {
         /// Fetch, check and canonicalize, but write nothing. Prints what would change.
         #[arg(long, action = ArgAction::SetTrue)]
         dry_run: bool,
+        /// Write the files even though `spec-stats` will not verify against the new version.
+        /// What the spec-drift workflow passes; a human still has to update stats.rs.
+        #[arg(long, action = ArgAction::SetTrue)]
+        no_verify: bool,
+    },
+
+    /// Compare the vendored spec against an upstream one and print a Markdown report of what
+    /// moved: operations, parameters, response shapes, shared responses, definitions.
+    ///
+    /// Exit status is 0 when the two agree, 3 when they differ, 1 on error — so
+    /// `.github/workflows/spec-drift.yaml` can branch on drift without parsing the report.
+    SpecDiff {
+        #[command(flatten)]
+        source: SpecDiffSource,
+        /// Write the report here instead of stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
 
     /// Print counts from the vendored spec, and by default assert they are the known-good ones.
@@ -135,10 +153,37 @@ enum Cmd {
     },
 }
 
+/// Exactly one of these names the upstream document for `spec-diff`.
+#[derive(Args)]
+#[group(required = true, multiple = false)]
+struct SpecDiffSource {
+    /// A Forgejo release tag, e.g. `v16.0.5`.
+    #[arg(long)]
+    tag: Option<String>,
+    /// A Forgejo branch, e.g. `forgejo` (upstream's development branch).
+    #[arg(long)]
+    branch: Option<String>,
+    /// A `v1_json.tmpl` or canonical JSON file already on disk.
+    #[arg(long)]
+    file: Option<PathBuf>,
+}
+
+impl SpecDiffSource {
+    fn into_source(self) -> Result<spec_diff::Source> {
+        match (self.tag, self.branch, self.file) {
+            (Some(tag), None, None) => Ok(spec_diff::Source::Tag(tag)),
+            (None, Some(branch), None) => Ok(spec_diff::Source::Branch(branch)),
+            (None, None, Some(file)) => Ok(spec_diff::Source::File(file)),
+            // clap's group rules make this unreachable; the error keeps it a message, not a panic.
+            _ => Err("spec-diff needs exactly one of --tag, --branch, --file".into()),
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match run(cli) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
         Err(e) => {
             eprintln!("xtask: {e}");
             ExitCode::FAILURE
@@ -146,13 +191,31 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(cli: Cli) -> Result<()> {
+fn run(cli: Cli) -> Result<ExitCode> {
     let root = workspace_root();
     match cli.cmd {
-        Cmd::UpdateSpec { version, dry_run } => update_spec::run(&root, &version, dry_run),
+        Cmd::SpecDiff { source, out } => {
+            let report = spec_diff::run(&root, &source.into_source()?, out.as_deref())?;
+            Ok(if report.has_drift() {
+                ExitCode::from(spec_diff::DRIFT_EXIT_CODE)
+            } else {
+                ExitCode::SUCCESS
+            })
+        }
+        other => run_unit(&root, other).map(|()| ExitCode::SUCCESS),
+    }
+}
+
+/// Every subcommand whose only outcomes are "done" and "failed".
+fn run_unit(root: &Path, cmd: Cmd) -> Result<()> {
+    match cmd {
+        Cmd::SpecDiff { .. } => Err("spec-diff is dispatched by `run`".into()),
+        Cmd::UpdateSpec { version, dry_run, no_verify } => {
+            update_spec::run(root, &version, dry_run, !no_verify)
+        }
 
         Cmd::SpecStats { no_verify, .. } => {
-            let loaded = spec::load(&root)?;
+            let loaded = spec::load(root)?;
             let stats = stats::Stats::compute(&loaded.spec);
             print!("{}", stats.render());
             if no_verify {
@@ -164,16 +227,16 @@ fn run(cli: Cli) -> Result<()> {
         }
 
         Cmd::Itest { keep, image, allow_skip, filter } => {
-            itest::run(&root, itest::Options { keep, image, allow_skip, filter })
+            itest::run(root, itest::Options { keep, image, allow_skip, filter })
         }
 
         Cmd::Codegen { check, check_names, dump_ir, accept_renames, accept_removals } => {
-            let loaded = spec::load(&root)?;
+            let loaded = spec::load(root)?;
             let overrides = overrides::Overrides::load()?;
             let ir = ir::lower::lower(&loaded, &overrides)?;
 
             let mode = name_lock::Mode { accept_renames, accept_removals };
-            name_lock::reconcile(&root, &ir, mode)?;
+            name_lock::reconcile(root, &ir, mode)?;
 
             if check_names {
                 println!(
@@ -193,7 +256,7 @@ fn run(cli: Cli) -> Result<()> {
 
             let files = emit::emit_all(&ir)?;
             let write_mode = if check { emit::Mode::Check } else { emit::Mode::Write };
-            let report = emit::write_all(&root, &files, write_mode)?;
+            let report = emit::write_all(root, &files, write_mode)?;
             print!("{}", report.render());
 
             if check && !report.is_clean() {
