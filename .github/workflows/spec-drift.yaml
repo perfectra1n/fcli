@@ -1,0 +1,337 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Spec drift
+#
+# Watches upstream Forgejo's Swagger spec so a change in the API reaches this repo
+# as a report or a pull request rather than as a bug from a user on a newer server.
+# Two jobs, two upstream refs, two very different actions:
+#
+#   upstream-main   diffs spec/ against the `forgejo` DEVELOPMENT branch. Nothing
+#                   here is released, so nothing is bumped; the report goes into
+#                   one tracking issue (updated in place, closed when the drift
+#                   goes away). It is an early warning: a response shape that
+#                   moved on main today is the deserialization failure of the
+#                   next release.
+#
+#   latest-release  diffs spec/ against the newest release TAG. That is what the
+#                   vendored spec is supposed to match, so any difference — or a
+#                   newer tag with an identical spec — opens (or refreshes) a
+#                   pull request that runs `update-spec` and `codegen`, so the
+#                   generated diff IS the review.
+#
+# Both use `cargo xtask spec-diff`, whose exit status is the branch point: 0 is
+# "identical", 3 is "drift", anything else is a real failure and fails the job.
+# The report it writes is Markdown built for exactly these two destinations.
+#
+# The `mise run` steps follow ci.yaml's rule: commands live in .mise/config.toml,
+# so `mise run spec-diff -- --branch forgejo` on a laptop is the same invocation.
+#
+# Tokens. Everything below works with GITHUB_TOKEN, with one well-known catch:
+# GitHub does not start workflows for a pull request GITHUB_TOKEN created, so the
+# bump PR arrives with no CI until someone pushes to it or closes and reopens it.
+# Setting a `SPEC_BOT_TOKEN` repository secret (a fine-grained PAT with contents
+# and pull-requests write on this repo) lifts that; the `||` below falls back to
+# GITHUB_TOKEN when the secret is absent, so nothing breaks without it.
+
+on:
+  schedule:
+    # Daily, off the hour so it does not queue behind everyone else's 06:00 cron.
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
+
+jobs:
+  upstream-main:
+    name: Diff against forgejo main
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ci
+
+      # Only for the report header: `spec-diff --branch` fetches the file by branch
+      # name, and the sha is what makes two reports comparable.
+      - name: Resolve the upstream head
+        id: head
+        run: |
+          set -euo pipefail
+          sha="$(curl --silent --show-error --fail --proto =https --tlsv1.2 \
+            https://codeberg.org/api/v1/repos/forgejo/forgejo/branches/forgejo \
+            | jq -r '.commit.id')"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          echo "short=${sha:0:10}" >> "$GITHUB_OUTPUT"
+
+      - name: Diff the vendored spec against the forgejo branch
+        id: diff
+        run: |
+          set -euo pipefail
+          set +e
+          mise run spec-diff -- --branch forgejo --out report.md
+          code=$?
+          set -e
+          case "$code" in
+            0) drift=false ;;
+            3) drift=true ;;
+            *) echo "::error::spec-diff failed with exit code $code"; exit "$code" ;;
+          esac
+          echo "drift=${drift}" >> "$GITHUB_OUTPUT"
+          {
+            echo "Upstream \`forgejo\` @ \`${{ steps.head.outputs.short }}\`"
+            echo
+            cat report.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # One issue, found by label, rewritten on every run so the body is always the
+      # current state and the edit history is the changelog. Closed — with a note —
+      # the first run after the drift disappears (usually: the release job's PR
+      # landed and the branch caught up to what we vendored).
+      - name: Open, update or close the tracking issue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          DRIFT: ${{ steps.diff.outputs.drift }}
+          UPSTREAM_SHA: ${{ steps.head.outputs.sha }}
+          UPSTREAM_SHORT: ${{ steps.head.outputs.short }}
+        with:
+          script: |
+            const fs = require('fs');
+            const label = 'spec-drift';
+            const title = 'Upstream API spec drift: Forgejo main vs vendored spec';
+            const { owner, repo } = context.repo;
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+
+            // addLabels creates a missing label on the fly; create() does not.
+            try {
+              await github.rest.issues.createLabel({
+                owner, repo, name: label, color: 'c2e0c6',
+                description: 'Automated: the vendored Forgejo spec differs from upstream',
+              });
+            } catch (e) {
+              if (e.status !== 422) throw e;
+            }
+
+            const open = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: 'open', labels: label, per_page: 100,
+            });
+            const existing = open.find(i => !i.pull_request);
+
+            if (process.env.DRIFT !== 'true') {
+              if (existing) {
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number: existing.number,
+                  body: `No drift against \`forgejo\` @ \`${process.env.UPSTREAM_SHORT}\` any more ([run](${runUrl})). Closing.`,
+                });
+                await github.rest.issues.update({ owner, repo, issue_number: existing.number, state: 'closed' });
+                core.info(`closed #${existing.number}`);
+              } else {
+                core.info('no drift and no open issue — nothing to do');
+              }
+              return;
+            }
+
+            let report = fs.readFileSync('report.md', 'utf8');
+            const cap = 60000; // issue bodies are capped at 65536 characters
+            if (report.length > cap) {
+              report = report.slice(0, cap) + '\n\n…(truncated; the full report is in the run summary)\n';
+            }
+            const body = [
+              `Upstream \`forgejo\` branch @ https://codeberg.org/forgejo/forgejo/commit/${process.env.UPSTREAM_SHA}`,
+              `Generated by [Spec drift](${runUrl}) on ${new Date().toISOString().slice(0, 10)}. `
+                + 'This issue is rewritten on every run; do not edit the body. '
+                + 'Nothing here is released yet — it previews what the next `latest-release` bump will contain.',
+              '',
+              report,
+            ].join('\n');
+
+            if (existing) {
+              await github.rest.issues.update({ owner, repo, issue_number: existing.number, title, body });
+              core.info(`updated #${existing.number}`);
+            } else {
+              const created = await github.rest.issues.create({ owner, repo, title, body, labels: [label] });
+              core.info(`opened #${created.data.number}`);
+            }
+
+  latest-release:
+    name: Diff against the latest release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ci
+
+      # Codeberg's `releases/latest` is the newest non-prerelease, non-draft
+      # release, which is what a user installing Forgejo today gets. Forgejo also
+      # keeps an LTS line (v15.x) receiving point releases; the newest release
+      # by date could in principle be one of those, so the tag is sanity-checked
+      # to be at least the vendored major before anything is done with it.
+      - name: Resolve the latest release and the vendored tag
+        id: tags
+        run: |
+          set -euo pipefail
+          latest="$(curl --silent --show-error --fail --proto =https --tlsv1.2 \
+            https://codeberg.org/api/v1/repos/forgejo/forgejo/releases/latest \
+            | jq -r '.tag_name')"
+          if ! [[ "$latest" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::latest release tag '$latest' is not a vX.Y.Z tag"; exit 1
+          fi
+          vendored="$(sed -n 's/^tag = "\(.*\)"$/\1/p' spec/lock.toml)"
+          if [ -z "$vendored" ]; then
+            echo "::error::could not read tag from spec/lock.toml"; exit 1
+          fi
+          latest_major="${latest#v}"; latest_major="${latest_major%%.*}"
+          vendored_major="${vendored#v}"; vendored_major="${vendored_major%%.*}"
+          if [ "$latest_major" -lt "$vendored_major" ]; then
+            echo "::error::latest release $latest is an older major than vendored $vendored; refusing to downgrade"
+            exit 1
+          fi
+          echo "latest=${latest}" >> "$GITHUB_OUTPUT"
+          echo "vendored=${vendored}" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest vendored=$vendored"
+
+      - name: Diff the vendored spec against the latest release
+        id: diff
+        run: |
+          set -euo pipefail
+          set +e
+          mise run spec-diff -- --tag "${{ steps.tags.outputs.latest }}" --out report.md
+          code=$?
+          set -e
+          case "$code" in
+            0) drift=false ;;
+            3) drift=true ;;
+            *) echo "::error::spec-diff failed with exit code $code"; exit "$code" ;;
+          esac
+          # A newer tag with a byte-identical spec is still a bump: lock.toml, the
+          # canonical file name and the itest image all carry the version.
+          if [ "$drift" = true ] || [ "${{ steps.tags.outputs.latest }}" != "${{ steps.tags.outputs.vendored }}" ]; then
+            bump=true
+          else
+            bump=false
+          fi
+          echo "drift=${drift}" >> "$GITHUB_OUTPUT"
+          echo "bump=${bump}" >> "$GITHUB_OUTPUT"
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+          echo "drift=$drift bump=$bump"
+
+      # The same three commands CONTRIBUTING.md gives a human, with two differences.
+      # `--no-verify`: the counts in stats.rs are for one version, so on a bump
+      # spec-stats fails by design until a human re-derives them — that step goes in
+      # the PR checklist instead. And if codegen refuses because a command name
+      # moved or an endpoint vanished, it is retried with the accept flags and the
+      # PR is marked breaking, because a PR with the rename report in it is more
+      # useful than a red job with the rename report in a log.
+      - name: Vendor the spec and regenerate
+        id: regen
+        if: steps.diff.outputs.bump == 'true'
+        env:
+          TAG: ${{ steps.tags.outputs.latest }}
+        run: |
+          set -euo pipefail
+          mise run update-spec -- --version "$TAG" --no-verify
+          cargo xtask spec-stats --no-verify > stats.txt 2>&1 || true
+
+          # The integration job boots the image named here; a bump that leaves it
+          # behind tests the new spec against the old server.
+          version="${TAG#v}"
+          sed -i -E "/^pub const FORGEJO_IMAGE/ s|:[0-9]+\.[0-9]+\.[0-9]+\"|:${version}\"|" \
+            crates/fjo-itest/src/lib.rs
+          grep -n '^pub const FORGEJO_IMAGE' crates/fjo-itest/src/lib.rs
+
+          breaking=false
+          if ! mise run codegen 2> codegen.log; then
+            echo "::warning::codegen refused the new spec (renames or removals); retrying with the accept flags"
+            cat codegen.log
+            breaking=true
+            cargo xtask codegen --accept-renames --accept-removals 2>&1 | tee renames.txt
+          fi
+          echo "breaking=${breaking}" >> "$GITHUB_OUTPUT"
+
+      - name: Compose the pull request body
+        if: steps.diff.outputs.bump == 'true'
+        env:
+          TAG: ${{ steps.tags.outputs.latest }}
+          VENDORED: ${{ steps.tags.outputs.vendored }}
+          BREAKING: ${{ steps.regen.outputs.breaking }}
+        run: |
+          set -euo pipefail
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          {
+            echo "Automated by [Spec drift](${run_url}): the vendored Forgejo API spec is \`${VENDORED}\` and the latest release is \`${TAG}\`."
+            echo
+            echo "This branch is rewritten on every run until it is merged or the tag moves on. Push fixes to it freely; the next run rebuilds on top of \`main\` and keeps the branch name."
+            echo
+            if [ "$BREAKING" = true ]; then
+              echo "> [!WARNING]"
+              echo "> \`cargo xtask codegen\` refused this spec because a command name moved or an endpoint disappeared. It was re-run with \`--accept-renames --accept-removals\`; the changelog-ready report is below. **Review \`spec/name-lock.toml\` before merging.**"
+              echo
+            fi
+            echo "## Before merging"
+            echo
+            echo "- [ ] Update \`EXPECTED_VERSION\` and the counts in \`crates/xtask/src/stats.rs\` from the table below, then run \`cargo xtask spec-stats\` — it must pass. Those counts are the loader's independent self-test and are the one thing this workflow will not write for you."
+            echo "- [ ] Read the diff under \`crates/\`: it is the API changelog for this release."
+            echo "- [ ] Confirm the \`Integration\` job booted \`codeberg.org/forgejo/forgejo:${TAG#v}\` (the constant in \`crates/fjo-itest/src/lib.rs\` was updated here)."
+            if [ "$BREAKING" = true ]; then
+              echo "- [ ] Retitle this PR with a \`!\` (e.g. \`feat(spec)!: …\`) so release-please cuts a major, and copy the rename report into the changelog."
+            fi
+            echo
+            cat report.md
+            echo
+            if [ -s renames.txt ]; then
+              echo "## Accepted renames and removals"
+              echo
+              echo '```'
+              cat renames.txt
+              echo '```'
+              echo
+            fi
+            echo "## \`cargo xtask spec-stats --no-verify\`"
+            echo
+            echo '```'
+            cat stats.txt
+            echo '```'
+          } > pr-body.md
+          wc -c pr-body.md
+
+      - name: Open or update the bump pull request
+        if: steps.diff.outputs.bump == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ secrets.SPEC_BOT_TOKEN || github.token }}
+          # A fixed name per tag, so a second run for the same release updates the
+          # PR in place instead of opening a twin.
+          branch: spec/bump-${{ steps.tags.outputs.latest }}
+          delete-branch: true
+          base: main
+          commit-message: |
+            feat(spec): update Forgejo API spec to ${{ steps.tags.outputs.latest }}
+
+            Vendored by the spec-drift workflow: `cargo xtask update-spec --version
+            ${{ steps.tags.outputs.latest }}` followed by `cargo xtask codegen`.
+          title: "feat(spec): update Forgejo API spec to ${{ steps.tags.outputs.latest }}"
+          body-path: pr-body.md
+          labels: |
+            spec-bump
+            ${{ steps.regen.outputs.breaking == 'true' && 'breaking' || '' }}
+          # Never leave the workflow's scratch files in the commit.
+          add-paths: |
+            spec/
+            crates/
+            Cargo.lock

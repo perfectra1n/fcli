@@ -103,6 +103,22 @@ run = "cargo doc --no-deps --locked -p forgejo-core -p forgejo-model -p forgejo-
 description = "Regenerate the committed generated trees from the vendored Swagger spec"
 run = "cargo xtask codegen"
 
+[tasks.update-spec]
+description = "Vendor the Forgejo Swagger spec at a release tag into spec/ (args: --version vX.Y.Z)"
+run = "cargo xtask update-spec"
+
+[tasks.spec-diff]
+description = "Markdown report of how an upstream spec differs from the vendored one (args: --tag vX | --branch forgejo | --file p)"
+run = '''
+set -eu
+# Exit status 3 means "they differ" — distinct from 1 so that
+# .github/workflows/spec-drift.yaml can branch on drift versus a real failure.
+# Run daily there against the `forgejo` development branch (tracking issue) and
+# the latest release tag (bump PR); run here to answer "what changed upstream"
+# before a bump, e.g. `mise run spec-diff -- --tag v16.0.5`.
+cargo xtask spec-diff "$@"
+'''
+
 [tasks.codegen-check]
 description = "Fail if the committed generated trees are stale or hand-edited (CI drift guard)"
 run = '''
