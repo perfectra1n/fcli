@@ -170,7 +170,6 @@ struct Budgets {
     porcelain: usize,
 }
 
-
 /// Both halves of a ratchet, per `docs/ratchets.md`: over budget fails with a message about
 /// fixing the code and never about raising the number; under budget prints the note that stops
 /// the budget rotting into a figure nobody has looked at since the day it was written.
@@ -239,7 +238,10 @@ struct Report {
 
 fn print_table(r: Report) {
     println!("==> command coverage\n");
-    println!("  {:<9} {:<12} {:>8} {:>7} {:>6} {:>8}", "plane", "surface", "covered", "total", "gap", "budget");
+    println!(
+        "  {:<9} {:<12} {:>8} {:>7} {:>6} {:>8}",
+        "plane", "surface", "covered", "total", "gap", "budget"
+    );
     println!(
         "  {:<9} {:<12} {:>8} {:>7} {:>6} {:>8}",
         "contract", "raw ops", r.contract_raw, r.contract_total, r.contract_gap, 0
@@ -306,8 +308,8 @@ fn read_journals(dir: &Path) -> Result<Vec<(Plane, Record)>> {
             if line.trim().is_empty() {
                 continue;
             }
-            let rec: Record = serde_json::from_str(line)
-                .map_err(|e| format!("{name} line {}: {e}", n + 1))?;
+            let rec: Record =
+                serde_json::from_str(line).map_err(|e| format!("{name} line {}: {e}", n + 1))?;
             out.push((plane, rec));
         }
     }
@@ -323,11 +325,7 @@ fn covered(journals: &[(Plane, Record)], plane: Plane, kind: &str) -> BTreeSet<S
 }
 
 fn gap(universe: &BTreeSet<&str>, covered: &BTreeSet<String>) -> BTreeSet<String> {
-    universe
-        .iter()
-        .filter(|id| !covered.contains(**id))
-        .map(|id| (*id).to_owned())
-        .collect()
+    universe.iter().filter(|id| !covered.contains(**id)).map(|id| (*id).to_owned()).collect()
 }
 
 /// A claimed id that names nothing is a hard error, not a silent zero.

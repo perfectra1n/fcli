@@ -247,10 +247,9 @@ fn run_unit(root: &Path, cmd: Cmd) -> Result<()> {
             }
         }
 
-        Cmd::CoverageCheck { dir, raw_budget, porcelain_budget, list } => coverage::run(
-            root,
-            coverage::Options { dir, raw_budget, porcelain_budget, list },
-        ),
+        Cmd::CoverageCheck { dir, raw_budget, porcelain_budget, list } => {
+            coverage::run(root, coverage::Options { dir, raw_budget, porcelain_budget, list })
+        }
 
         Cmd::Itest { keep, image, allow_skip, filter } => {
             itest::run(root, itest::Options { keep, image, allow_skip, filter })
