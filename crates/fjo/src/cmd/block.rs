@@ -111,7 +111,7 @@ pub fn run(globals: &GlobalOpts, args: &Args) -> Result<()> {
                     Some(org) => api.org().block_user(org, &w.user).await?,
                     None => api.user().block_user(&w.user).await?,
                 }
-                emit.done(&format!("blocked {} {}", &w.user, whose(w.scope.org.as_deref())));
+                emit.done(&format!("blocked {} {}", w.user, whose(w.scope.org.as_deref())));
                 Ok(())
             }
             Cmd::Remove(w) => {
@@ -119,7 +119,7 @@ pub fn run(globals: &GlobalOpts, args: &Args) -> Result<()> {
                     Some(org) => api.org().unblock_user(org, &w.user).await?,
                     None => api.user().unblock_user(&w.user).await?,
                 }
-                emit.done(&format!("unblocked {} {}", &w.user, whose(w.scope.org.as_deref())));
+                emit.done(&format!("unblocked {} {}", w.user, whose(w.scope.org.as_deref())));
                 Ok(())
             }
         }
