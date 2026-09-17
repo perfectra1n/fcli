@@ -474,6 +474,12 @@ set -eu
 # To drain one: `cargo xtask coverage-check --list` names what is uncovered.
 RAW_BUDGET=506
 PORCELAIN_BUDGET=244
+# Start from an empty directory. A journal is named after the pid that wrote
+# it, so stale ones from an earlier run would ACCUMULATE rather than be
+# overwritten -- and a stale contract journal would keep crediting an operation
+# that a spec bump has since removed. `xtask itest` clears only `live-*` (it
+# must not delete the hermetic half's output), so the full wipe belongs here.
+rm -rf target/fjo-coverage
 # The hermetic half first -- it writes the porcelain inventory and the contract
 # journal that the ratchet reads, and it needs no Docker.
 FJO_COVERAGE_DIR="$PWD/target/fjo-coverage" cargo test --locked -p fjo \
