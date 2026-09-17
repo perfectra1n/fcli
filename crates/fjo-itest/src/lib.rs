@@ -270,8 +270,31 @@ impl Instance {
             .with_env_var("FORGEJO__server__ROOT_URL", root_url)
             .with_env_var("FORGEJO__server__OFFLINE_MODE", "true")
             .with_env_var("FORGEJO__service__DISABLE_REGISTRATION", "true")
-            // Actions off: nothing here needs a runner, and it shortens startup.
-            .with_env_var("FORGEJO__actions__ENABLED", "false")
+            // Actions ON, though no runner ever attaches.
+            //
+            // This used to be `false`, with the note "nothing here needs a runner, and it
+            // shortens startup". The first half stopped being true: with the unit disabled
+            // Forgejo does not merely refuse to *run* anything, it stops routing — every path
+            // under `/repos/{owner}/{repo}/actions/` answers 404, and `PATCH` with
+            // `has_actions: true` returns 200 while leaving the field `false`. So four
+            // operations were unreachable for a reason that had nothing to do with runners.
+            //
+            // Enabling it costs nothing here: `POST .../dispatches` returns 201 and the run is
+            // born `waiting` and stays there forever with no runner, which is exactly the
+            // fixture the run lifecycle needs.
+            .with_env_var("FORGEJO__actions__ENABLED", "true")
+            // Quotas ON, for the same shape of reason.
+            //
+            // Forgejo registers the `/admin/quota*`, `/orgs/{org}/quota*` and `/user/quota*`
+            // routes only when an operator sets this. Without it, twenty-one operations and the
+            // whole `fjo quota` command group answer a plain-text `404 page not found` from the
+            // ROUTER -- not from a handler -- so a test against them learns nothing about
+            // whether the server agrees with the specification, which is the only thing this
+            // suite exists to find out.
+            .with_env_var("FORGEJO__quota__ENABLED", "true")
+            // Repository flags ON, same story again: `[repository] ENABLE_FLAGS` gates whether
+            // the six `/repos/{owner}/{repo}/flags*` routes are registered at all.
+            .with_env_var("FORGEJO__repository__ENABLE_FLAGS", "true")
             // Deliberately no `with_startup_timeout`: it bounds a *readiness condition*, and
             // there are none here, so setting it would promise a guarantee it does not give.
             // [`Instance::wait_healthy`] is the clock, and it is the one with the diagnosis.
