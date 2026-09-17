@@ -8,7 +8,7 @@
 
 use std::path::PathBuf;
 
-use fjo_itest::{TestRepo, git, instance_or_skip};
+use fjo_itest::{TestRepo, cover, git, instance_or_skip};
 
 struct Scratch(PathBuf);
 impl Scratch {
@@ -48,6 +48,7 @@ impl Drop for Scratch {
 #[test]
 fn agit_creates_a_pull_request_without_a_branch() {
     let inst = instance_or_skip!();
+    cover!(porcelain: ["pr create"], hits: ["repoGet", "repoGetPullRequest"]);
     let repo = TestRepo::create_initialized(inst, "agit");
     let scratch = Scratch::new("create");
     repo.clone_to(scratch.path());
@@ -108,6 +109,7 @@ fn agit_creates_a_pull_request_without_a_branch() {
 #[test]
 fn agit_reuses_the_pull_request_for_the_same_topic() {
     let inst = instance_or_skip!();
+    cover!(porcelain: ["pr create"], hits: ["repoGet", "repoGetPullRequest"]);
     let repo = TestRepo::create_initialized(inst, "agit-update");
     let scratch = Scratch::new("update");
     repo.clone_to(scratch.path());
@@ -170,6 +172,8 @@ fn agit_reuses_the_pull_request_for_the_same_topic() {
 #[test]
 fn a_dry_run_with_an_explicit_base_asks_the_server_nothing() {
     let inst = instance_or_skip!();
+    // No `hits:`: the assertion is that this reaches the server for nothing.
+    cover!(porcelain: ["pr create"]);
     let repo = TestRepo::create_initialized(inst, "agit-dry");
     let scratch = Scratch::new("dry");
     repo.clone_to(scratch.path());
@@ -225,6 +229,8 @@ fn a_dry_run_with_an_explicit_base_asks_the_server_nothing() {
 #[test]
 fn a_push_the_server_accepted_is_not_reported_as_a_failure() {
     let inst = instance_or_skip!();
+    // No `hits:`: the token is deliberately invalid, so every API call here is a 401.
+    cover!(porcelain: ["pr create"]);
     let repo = TestRepo::create_initialized(inst, "agit-readback");
     let scratch = Scratch::new("readback");
     repo.clone_to(scratch.path());

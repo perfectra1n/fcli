@@ -8,7 +8,7 @@
 //! `FakeTransport` cannot find any of this, because the canned responses are written by the
 //! same reading of the specification that produced the types.
 
-use fjo_itest::{TestRepo, commit_and_push, instance_or_skip};
+use fjo_itest::{TestRepo, commit_and_push, cover, instance_or_skip};
 
 /// Collect the keys a JSON object sends as `null`, so a failure names them.
 fn null_keys(body: &str) -> Vec<String> {
@@ -24,6 +24,7 @@ fn null_keys(body: &str) -> Vec<String> {
 #[test]
 fn null_slice_decodes_as_empty() {
     let inst = instance_or_skip!();
+    cover!(porcelain: ["issue view", "issue list"], hits: ["issueGetIssue", "issueListIssues"]);
     let repo = TestRepo::create(inst, "null-slice");
     let (code, body) = repo.api("POST", "issues", Some(r#"{"title":"no assignees"}"#));
     assert!((200..300).contains(&code), "{body}");
@@ -61,6 +62,10 @@ fn null_slice_decodes_as_empty() {
 #[test]
 fn open_pull_request_decodes() {
     let inst = instance_or_skip!();
+    cover!(
+        porcelain: ["pr list", "pr view"],
+        hits: ["repoListPullRequests", "repoGetPullRequest"],
+    );
     let repo = TestRepo::create_initialized(inst, "null-pr");
     let dir = std::env::temp_dir().join(format!("fjo-itest-{}-pr", repo.name));
     let _ = std::fs::remove_dir_all(&dir);
@@ -86,6 +91,7 @@ fn open_pull_request_decodes() {
 #[test]
 fn merged_pull_request_decodes() {
     let inst = instance_or_skip!();
+    cover!(porcelain: ["pr view"], hits: ["repoGetPullRequest"]);
     let repo = TestRepo::create_initialized(inst, "merged-pr");
     let dir = std::env::temp_dir().join(format!("fjo-itest-{}-mpr", repo.name));
     let _ = std::fs::remove_dir_all(&dir);
@@ -125,6 +131,7 @@ fn merged_pull_request_decodes() {
 #[test]
 fn directory_listing_decodes() {
     let inst = instance_or_skip!();
+    cover!(porcelain: ["workflow list"], hits: ["repoGetContents", "repoGetRawFile"]);
     let repo = TestRepo::create_initialized(inst, "null-contents");
     let dir = std::env::temp_dir().join(format!("fjo-itest-{}-c", repo.name));
     let _ = std::fs::remove_dir_all(&dir);

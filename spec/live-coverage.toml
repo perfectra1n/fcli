@@ -1,0 +1,92 @@
+# Operations the live suite cannot drive, and what would change that.
+#
+# Read by `cargo xtask coverage-check` (crates/xtask/src/coverage.rs). An entry here leaves the
+# operation OUT OF THE DENOMINATOR rather than counting it as covered, so the live budget stays
+# pure debt and its honest target is zero.
+#
+# Modelled on spec/name-lock.toml: the point is not the exemption, it is the **reviewable diff**.
+# Every entry carries a `reason` (what stops it today) and an `unblock` (what would remove it).
+# An entry naming an operation that no longer exists is a hard failure, so a spec bump cannot
+# quietly shrink the denominator.
+#
+# Adding one is a decision somebody signs off on. Before adding, ask whether the answer is
+# harness capability rather than exemption — per the 2026-09-16 design note, a second federating
+# instance is in scope for the harness, so "we would need one" is a reason to build it, not a
+# reason to be excused from it forever. The whole of this file is currently one such case.
+#
+# ---------------------------------------------------------------------------------------------
+# ActivityPub.
+#
+# Measured against codeberg.org/forgejo/forgejo:16.0.4 with FORGEJO__federation__ENABLED=true,
+# which is what crates/fjo-itest/src/lib.rs now boots:
+#
+#   * `/api/v1/nodeinfo` and `/api/v1/activitypub/actor` answer 200. They are NOT exempt — see
+#     `the_instance_level_federation_documents_answer_and_the_actor_scoped_ones_demand_a_signature`
+#     in crates/fjo-itest/tests/live_misc.rs, which covers both.
+#   * Every actor-scoped read — user-id, its outbox, repository-id, and the two activity reads —
+#     answers `request signature verification failed`. Forgejo puts HTTP signature verification
+#     in front of these even for a GET, so a bearer token of any scope is refused. They need the
+#     same second-instance topology as the five inbox/outbox POSTs, which is why they are here
+#     and not merely "not written yet".
+#   * Without [federation] ENABLED none of the seven is routed at all: the router answers Go's
+#     bare `404 page not found` before any handler runs.
+#
+# So `docs/superpowers/specs/2026-09-16-command-coverage-design.md`'s "ActivityPub GET (6) —
+# drivable directly" holds for two of the six, not six. live_misc.rs asserts the refusal for the
+# other five and FAILS if any of them ever starts succeeding, so these entries cannot quietly
+# outlive the thing that justified them.
+# ---------------------------------------------------------------------------------------------
+
+[unreachable.activitypubPerson]
+reason = "GET /activitypub/user-id/{id} answers `request signature verification failed` for any bearer token; Forgejo requires an HTTP-signed request even for this read"
+unblock = "two-instance topology in the harness, with actor keys, so the request can be signed as a remote actor"
+
+[unreachable.activitypubPersonFeed]
+reason = "GET /activitypub/user-id/{id}/outbox answers `request signature verification failed` for any bearer token; Forgejo requires an HTTP-signed request even for this read"
+unblock = "two-instance topology in the harness, with actor keys, so the request can be signed as a remote actor"
+
+[unreachable.activitypubRepository]
+reason = "GET /activitypub/repository-id/{id} answers `request signature verification failed` for any bearer token; Forgejo requires an HTTP-signed request even for this read"
+unblock = "two-instance topology in the harness, with actor keys, so the request can be signed as a remote actor"
+
+[unreachable.activitypubPersonActivity]
+reason = "needs an HTTP-signed request like the other actor-scoped reads, and an activity id — activities only exist once something has federated"
+unblock = "two-instance topology in the harness: a remote actor whose signed interaction creates an activity to read back"
+
+[unreachable.activitypubPersonActivityNote]
+reason = "needs an HTTP-signed request like the other actor-scoped reads, and an activity id — activities only exist once something has federated"
+unblock = "two-instance topology in the harness: a remote actor whose signed interaction creates an activity to read back"
+
+[unreachable.activitypubInstanceActorInbox]
+reason = "federation inbox; requires a second instance and an HTTP-signed payload"
+unblock = "two-instance topology in the harness"
+
+[unreachable.activitypubInstanceActorOutbox]
+reason = "federation outbox POST; requires a second instance and an HTTP-signed payload"
+unblock = "two-instance topology in the harness"
+
+[unreachable.activitypubPersonInbox]
+reason = "federation inbox; requires a second instance and an HTTP-signed payload"
+unblock = "two-instance topology in the harness"
+
+[unreachable.activitypubRepositoryInbox]
+reason = "federation inbox; requires a second instance and an HTTP-signed payload"
+unblock = "two-instance topology in the harness"
+
+[unreachable.activitypubRepositoryOutbox]
+reason = "federation outbox POST; requires a second instance and an HTTP-signed payload"
+unblock = "two-instance topology in the harness"
+
+# ---------------------------------------------------------------------------------------------
+# Actions logs.
+#
+# `repoGetActionJobLogs` IS covered: `live_actions.rs` dispatches a real workflow, resolves its
+# jobs (that call succeeds and yields job 1), then asks for that job's output and gets a 404 —
+# the job exists and the message names it; a job nobody started simply has no logs.
+#
+# The run-level route has no such reachable shape. It needs a run whose jobs have produced
+# output, and no runner ever attaches to the test instance.
+
+[unreachable.repoGetActionRunLogs]
+reason = "needs an Actions run whose jobs actually produced output; no runner attaches to the test instance, so every dispatched run is born `waiting` and stays there"
+unblock = "an act_runner sidecar registered against the test instance, which would also unblock artifact download/delete and ListActionTasks"

@@ -10,7 +10,7 @@
 //! consequence silent bug available in this tool, so it gets a test against the real clamp
 //! rather than a simulated one.
 
-use fjo_itest::{TestRepo, instance_or_skip};
+use fjo_itest::{TestRepo, cover, instance_or_skip};
 
 /// Comfortably more than one page at both the default page size (30) and the clamp (50), so the
 /// walk has to cross a boundary no matter which the server picks.
@@ -288,6 +288,7 @@ fn a_percent_escape_in_an_endpoint_query_is_not_encoded_twice() {
 #[test]
 fn user_limit_caps_the_walk() {
     let inst = instance_or_skip!();
+    cover!(porcelain: ["issue list"], hits: ["issueListIssues"]);
     let repo = TestRepo::create(inst, "paging-userlimit");
     seed_issues(&repo, ISSUES);
 
@@ -372,6 +373,7 @@ fn pagination_headers_differ_between_endpoints() {
 #[test]
 fn truncated_list_reports_the_total() {
     let inst = instance_or_skip!();
+    cover!(porcelain: ["label list"], hits: ["issueListLabels"]);
     let repo = TestRepo::create(inst, "paging-banner");
     for i in 1..=60 {
         repo.api("POST", "labels", Some(&format!(r#"{{"name":"lbl-{i}","color":"00ff00"}}"#)));
