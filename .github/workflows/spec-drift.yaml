@@ -3,24 +3,41 @@ name: Spec drift
 #
 # Watches upstream Forgejo's Swagger spec so a change in the API reaches this repo
 # as a report or a pull request rather than as a bug from a user on a newer server.
-# Two jobs, two upstream refs, two very different actions:
 #
-#   upstream-main   diffs spec/ against the `forgejo` DEVELOPMENT branch. Nothing
-#                   here is released, so nothing is bumped; the report goes into
-#                   one tracking issue (updated in place, closed when the drift
-#                   goes away). It is an early warning: a response shape that
-#                   moved on main today is the deserialization failure of the
-#                   next release.
+# The question every report has to answer first is *has upstream released this yet*,
+# because the answer decides what you do about it:
 #
-#   latest-release  diffs spec/ against the newest release TAG. That is what the
-#                   vendored spec is supposed to match, so any difference — or a
-#                   newer tag with an identical spec — opens (or refreshes) a
-#                   pull request that runs `update-spec` and `codegen`, so the
-#                   generated diff IS the review.
+#   released    upstream cut a tag containing the change. There is something to do
+#               today: take the bump pull request, which carries the regenerated code.
+#
+#   unreleased  the change exists only on upstream's development branch. There is
+#               nothing to do today, but a response shape that moved on main is the
+#               deserialization failure of the next release, so it is worth seeing.
+#
+# Three jobs:
+#
+#   resolve         names the two upstream refs once — the latest release tag and the
+#                   head of the `forgejo` branch — so both jobs below agree on them and
+#                   the "refusing to downgrade a major" guard lives in one place.
+#
+#   upstream-main   the unreleased half. Diffs the latest RELEASE against the `forgejo`
+#                   BRANCH, so its report contains only what no release has. Goes into
+#                   one tracking issue, rewritten in place and closed when the branch
+#                   stops being ahead. Nothing is bumped, because there is no tag yet.
+#
+#   latest-release  the released half. Diffs the vendored spec against the newest release
+#                   TAG. Any difference — or a newer tag with an identical spec — opens
+#                   (or refreshes) a pull request that runs `update-spec` and `codegen`,
+#                   so the generated diff IS the review.
+#
+# A tag whose spec is byte-identical to the vendored one is still a bump: lock.toml, the
+# canonical file name and the itest image all carry the version. That pull request is
+# labelled version-only, because otherwise its ~250-file diff — every generated file's
+# `@generated ... from spec/forgejo-X.Y.Z.json` header line, and nothing else — reads as
+# a large API change when no type, field or command moved.
 #
 # Both use `cargo xtask spec-diff`, whose exit status is the branch point: 0 is
 # "identical", 3 is "drift", anything else is a real failure and fails the job.
-# The report it writes is Markdown built for exactly these two destinations.
 #
 # The `mise run` steps follow ci.yaml's rule: commands live in .mise/config.toml,
 # so `mise run spec-diff -- --branch forgejo` on a laptop is the same invocation.
@@ -50,8 +67,63 @@ env:
   MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}
 
 jobs:
+  resolve:
+    name: Resolve the upstream refs
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      latest: ${{ steps.refs.outputs.latest }}
+      vendored: ${{ steps.refs.outputs.vendored }}
+      main_sha: ${{ steps.refs.outputs.main_sha }}
+      main_short: ${{ steps.refs.outputs.main_short }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Codeberg's `releases/latest` is the newest non-prerelease, non-draft release,
+      # which is what a user installing Forgejo today gets. Forgejo also keeps an LTS
+      # line (v15.x) receiving point releases; the newest release by date could in
+      # principle be one of those, so the tag is sanity-checked to be at least the
+      # vendored major before either job below does anything with it.
+      - name: Resolve the latest release and the forgejo branch head
+        id: refs
+        run: |
+          set -euo pipefail
+
+          latest="$(curl --silent --show-error --fail --proto =https --tlsv1.2 \
+            https://codeberg.org/api/v1/repos/forgejo/forgejo/releases/latest \
+            | jq -r '.tag_name')"
+          if ! [[ "$latest" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::latest release tag '$latest' is not a vX.Y.Z tag"; exit 1
+          fi
+
+          vendored="$(sed -n 's/^tag = "\(.*\)"$/\1/p' spec/lock.toml)"
+          if [ -z "$vendored" ]; then
+            echo "::error::could not read tag from spec/lock.toml"; exit 1
+          fi
+
+          latest_major="${latest#v}"; latest_major="${latest_major%%.*}"
+          vendored_major="${vendored#v}"; vendored_major="${vendored_major%%.*}"
+          if [ "$latest_major" -lt "$vendored_major" ]; then
+            echo "::error::latest release $latest is an older major than vendored $vendored; refusing to downgrade"
+            exit 1
+          fi
+
+          main_sha="$(curl --silent --show-error --fail --proto =https --tlsv1.2 \
+            https://codeberg.org/api/v1/repos/forgejo/forgejo/branches/forgejo \
+            | jq -r '.commit.id')"
+
+          {
+            echo "latest=${latest}"
+            echo "vendored=${vendored}"
+            echo "main_sha=${main_sha}"
+            echo "main_short=${main_sha:0:10}"
+          } >> "$GITHUB_OUTPUT"
+          echo "latest=$latest vendored=$vendored main=${main_sha:0:10}"
+
   upstream-main:
-    name: Diff against forgejo main
+    name: Diff the latest release against forgejo main
+    needs: resolve
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -63,61 +135,90 @@ jobs:
         with:
           shared-key: ci
 
-      # Only for the report header: `spec-diff --branch` fetches the file by branch
-      # name, and the sha is what makes two reports comparable.
-      - name: Resolve the upstream head
-        id: head
-        run: |
-          set -euo pipefail
-          sha="$(curl --silent --show-error --fail --proto =https --tlsv1.2 \
-            https://codeberg.org/api/v1/repos/forgejo/forgejo/branches/forgejo \
-            | jq -r '.commit.id')"
-          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
-          echo "short=${sha:0:10}" >> "$GITHUB_OUTPUT"
-
-      - name: Diff the vendored spec against the forgejo branch
+      # Two diffs, because the pair of them is the answer to "is this main or a release".
+      #
+      #   released.md    vendored -> latest release tag. What a bump would bring in. The
+      #                  `latest-release` job below is already opening a pull request for
+      #                  exactly this; it is repeated here so the issue can state it.
+      #   unreleased.md  latest release tag -> `forgejo` branch. What exists upstream and
+      #                  in no release. This is the early warning, and it is the thing
+      #                  this issue tracks.
+      - name: Diff released and unreleased
         id: diff
+        env:
+          LATEST: ${{ needs.resolve.outputs.latest }}
         run: |
           set -euo pipefail
-          set +e
-          mise run spec-diff -- --branch forgejo --out report.md
-          code=$?
-          set -e
-          case "$code" in
-            0) drift=false ;;
-            3) drift=true ;;
-            *) echo "::error::spec-diff failed with exit code $code"; exit "$code" ;;
-          esac
-          echo "drift=${drift}" >> "$GITHUB_OUTPUT"
+
+          # Sets $drift. Not a command substitution on purpose: `mise run` writes to stdout,
+          # which would end up in the captured value, and an `exit` inside `$(...)` would only
+          # leave the subshell. 0 identical, 3 drift, anything else is a real failure.
+          drift=
+          run_diff() {
+            set +e
+            mise run spec-diff -- "$@"
+            local code=$?
+            set -e
+            case "$code" in
+              0) drift=false ;;
+              3) drift=true ;;
+              *) echo "::error::spec-diff failed with exit code $code"; exit "$code" ;;
+            esac
+          }
+
+          run_diff --tag "$LATEST" --out released.md
+          released="$drift"
+          run_diff --baseline-tag "$LATEST" --branch forgejo --out unreleased.md
+          unreleased="$drift"
+
           {
-            echo "Upstream \`forgejo\` @ \`${{ steps.head.outputs.short }}\`"
+            echo "released=${released}"
+            echo "unreleased=${unreleased}"
+            echo "released_summary=$(sed -n 's/^\*\*Summary:\*\* \(.*\)\.$/\1/p' released.md)"
+            echo "unreleased_summary=$(sed -n 's/^\*\*Summary:\*\* \(.*\)\.$/\1/p' unreleased.md)"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Released (vendored -> \`$LATEST\`)"
+            cat released.md
             echo
-            cat report.md
+            echo "## Unreleased (\`$LATEST\` -> \`forgejo\` branch)"
+            cat unreleased.md
           } >> "$GITHUB_STEP_SUMMARY"
+          echo "released=$released unreleased=$unreleased"
 
       # One issue, found by label, rewritten on every run so the body is always the
-      # current state and the edit history is the changelog. Closed — with a note —
-      # the first run after the drift disappears (usually: the release job's PR
-      # landed and the branch caught up to what we vendored).
+      # current state and the edit history is the changelog. It tracks the UNRELEASED
+      # half: released drift already has a pull request, and having both open for the
+      # same change is noise. So it closes the first run upstream's branch stops being
+      # ahead of upstream's own latest release — that is the moment the preview becomes
+      # somebody's bump pull request instead.
       - name: Open, update or close the tracking issue
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          DRIFT: ${{ steps.diff.outputs.drift }}
-          UPSTREAM_SHA: ${{ steps.head.outputs.sha }}
-          UPSTREAM_SHORT: ${{ steps.head.outputs.short }}
+          RELEASED: ${{ steps.diff.outputs.released }}
+          UNRELEASED: ${{ steps.diff.outputs.unreleased }}
+          RELEASED_SUMMARY: ${{ steps.diff.outputs.released_summary }}
+          UNRELEASED_SUMMARY: ${{ steps.diff.outputs.unreleased_summary }}
+          LATEST: ${{ needs.resolve.outputs.latest }}
+          VENDORED: ${{ needs.resolve.outputs.vendored }}
+          MAIN_SHA: ${{ needs.resolve.outputs.main_sha }}
+          MAIN_SHORT: ${{ needs.resolve.outputs.main_short }}
         with:
           script: |
             const fs = require('fs');
             const label = 'spec-drift';
-            const title = 'Upstream API spec drift: Forgejo main vs vendored spec';
+            const env = process.env;
             const { owner, repo } = context.repo;
             const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const title =
+              `Upstream API spec drift: forgejo main is ahead of ${env.LATEST} (vendored ${env.VENDORED})`;
 
             // addLabels creates a missing label on the fly; create() does not.
             try {
               await github.rest.issues.createLabel({
                 owner, repo, name: label, color: 'c2e0c6',
-                description: 'Automated: the vendored Forgejo spec differs from upstream',
+                description: 'Automated: upstream Forgejo has unreleased API spec changes',
               });
             } catch (e) {
               if (e.status !== 422) throw e;
@@ -128,44 +229,75 @@ jobs:
             });
             const existing = open.find(i => !i.pull_request);
 
-            if (process.env.DRIFT !== 'true') {
+            if (env.UNRELEASED !== 'true') {
               if (existing) {
                 await github.rest.issues.createComment({
                   owner, repo, issue_number: existing.number,
-                  body: `No drift against \`forgejo\` @ \`${process.env.UPSTREAM_SHORT}\` any more ([run](${runUrl})). Closing.`,
+                  body: `The \`forgejo\` branch @ \`${env.MAIN_SHORT}\` no longer has anything that `
+                    + `\`${env.LATEST}\` does not ([run](${runUrl})). Nothing is unreleased any more. Closing.`,
                 });
                 await github.rest.issues.update({ owner, repo, issue_number: existing.number, state: 'closed' });
                 core.info(`closed #${existing.number}`);
               } else {
-                core.info('no drift and no open issue — nothing to do');
+                core.info('nothing unreleased and no open issue — nothing to do');
               }
               return;
             }
 
-            let report = fs.readFileSync('report.md', 'utf8');
-            const cap = 60000; // issue bodies are capped at 65536 characters
-            if (report.length > cap) {
-              report = report.slice(0, cap) + '\n\n…(truncated; the full report is in the run summary)\n';
-            }
+            // Nest a report under our own heading: drop its H1, push the rest down a level.
+            const nest = (file) => fs.readFileSync(file, 'utf8')
+              .replace(/^# Forgejo API spec drift\n+/, '')
+              .replace(/^(#{2,})/gm, '#$1')
+              .trim();
+
+            const released = env.RELEASED === 'true'
+              ? `**${env.RELEASED_SUMMARY}.** These are in \`${env.LATEST}\` and not in the vendored `
+                + `\`${env.VENDORED}\`. There is a \`spec-bump\` pull request open for them, and merging `
+                + `it is what brings them in. They are *not* listed below.`
+              : `**None.** \`${env.LATEST}\` and the vendored \`${env.VENDORED}\` describe the same API, `
+                + `so every change listed below is unreleased.`;
+
             const body = [
-              `Upstream \`forgejo\` branch @ https://codeberg.org/forgejo/forgejo/commit/${process.env.UPSTREAM_SHA}`,
               `Generated by [Spec drift](${runUrl}) on ${new Date().toISOString().slice(0, 10)}. `
-                + 'This issue is rewritten on every run; do not edit the body. '
-                + 'Nothing here is released yet — it previews what the next `latest-release` bump will contain.',
+                + 'This issue is rewritten on every run; do not edit the body.',
               '',
-              report,
+              '| | ref | compared with | result |',
+              '|---|---|---|---|',
+              `| Latest release | \`${env.LATEST}\` | vendored \`${env.VENDORED}\` | `
+                + `${env.RELEASED === 'true' ? env.RELEASED_SUMMARY : 'identical'} |`,
+              `| \`forgejo\` branch | [\`${env.MAIN_SHORT}\`](https://codeberg.org/forgejo/forgejo/commit/${env.MAIN_SHA}) `
+                + `| latest release \`${env.LATEST}\` | ${env.UNRELEASED_SUMMARY} |`,
+              '',
+              '## Released — already shipped by upstream',
+              '',
+              released,
+              '',
+              '## Unreleased — on `forgejo` main only',
+              '',
+              `**${env.UNRELEASED_SUMMARY}.** Everything below exists on upstream's development branch `
+                + `and in no Forgejo release. **There is nothing to do about it today** — no tag means `
+                + 'nothing to vendor. It is here because a response shape that moves on main is the '
+                + 'deserialization failure of the next release, and this is the notice.',
+              '',
+              nest('unreleased.md'),
             ].join('\n');
 
+            const cap = 60000; // issue bodies are capped at 65536 characters
+            const capped = body.length > cap
+              ? body.slice(0, cap) + '\n\n…(truncated; the full report is in the run summary)\n'
+              : body;
+
             if (existing) {
-              await github.rest.issues.update({ owner, repo, issue_number: existing.number, title, body });
+              await github.rest.issues.update({ owner, repo, issue_number: existing.number, title, body: capped });
               core.info(`updated #${existing.number}`);
             } else {
-              const created = await github.rest.issues.create({ owner, repo, title, body, labels: [label] });
+              const created = await github.rest.issues.create({ owner, repo, title, body: capped, labels: [label] });
               core.info(`opened #${created.data.number}`);
             }
 
   latest-release:
     name: Diff against the latest release
+    needs: resolve
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -177,41 +309,15 @@ jobs:
         with:
           shared-key: ci
 
-      # Codeberg's `releases/latest` is the newest non-prerelease, non-draft
-      # release, which is what a user installing Forgejo today gets. Forgejo also
-      # keeps an LTS line (v15.x) receiving point releases; the newest release
-      # by date could in principle be one of those, so the tag is sanity-checked
-      # to be at least the vendored major before anything is done with it.
-      - name: Resolve the latest release and the vendored tag
-        id: tags
-        run: |
-          set -euo pipefail
-          latest="$(curl --silent --show-error --fail --proto =https --tlsv1.2 \
-            https://codeberg.org/api/v1/repos/forgejo/forgejo/releases/latest \
-            | jq -r '.tag_name')"
-          if ! [[ "$latest" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::latest release tag '$latest' is not a vX.Y.Z tag"; exit 1
-          fi
-          vendored="$(sed -n 's/^tag = "\(.*\)"$/\1/p' spec/lock.toml)"
-          if [ -z "$vendored" ]; then
-            echo "::error::could not read tag from spec/lock.toml"; exit 1
-          fi
-          latest_major="${latest#v}"; latest_major="${latest_major%%.*}"
-          vendored_major="${vendored#v}"; vendored_major="${vendored_major%%.*}"
-          if [ "$latest_major" -lt "$vendored_major" ]; then
-            echo "::error::latest release $latest is an older major than vendored $vendored; refusing to downgrade"
-            exit 1
-          fi
-          echo "latest=${latest}" >> "$GITHUB_OUTPUT"
-          echo "vendored=${vendored}" >> "$GITHUB_OUTPUT"
-          echo "latest=$latest vendored=$vendored"
-
       - name: Diff the vendored spec against the latest release
         id: diff
+        env:
+          LATEST: ${{ needs.resolve.outputs.latest }}
+          VENDORED: ${{ needs.resolve.outputs.vendored }}
         run: |
           set -euo pipefail
           set +e
-          mise run spec-diff -- --tag "${{ steps.tags.outputs.latest }}" --out report.md
+          mise run spec-diff -- --tag "$LATEST" --out report.md
           code=$?
           set -e
           case "$code" in
@@ -221,7 +327,7 @@ jobs:
           esac
           # A newer tag with a byte-identical spec is still a bump: lock.toml, the
           # canonical file name and the itest image all carry the version.
-          if [ "$drift" = true ] || [ "${{ steps.tags.outputs.latest }}" != "${{ steps.tags.outputs.vendored }}" ]; then
+          if [ "$drift" = true ] || [ "$LATEST" != "$VENDORED" ]; then
             bump=true
           else
             bump=false
@@ -242,11 +348,11 @@ jobs:
         id: regen
         if: steps.diff.outputs.bump == 'true'
         env:
-          TAG: ${{ steps.tags.outputs.latest }}
+          TAG: ${{ needs.resolve.outputs.latest }}
+          DRIFT: ${{ steps.diff.outputs.drift }}
         run: |
           set -euo pipefail
           mise run update-spec -- --version "$TAG" --no-verify
-          cargo xtask spec-stats --no-verify > stats.txt 2>&1 || true
 
           # The integration job boots the image named here; a bump that leaves it
           # behind tests the new spec against the old server.
@@ -254,6 +360,23 @@ jobs:
           sed -i -E "/^pub const FORGEJO_IMAGE/ s|:[0-9]+\.[0-9]+\.[0-9]+\"|:${version}\"|" \
             crates/fjo-itest/src/lib.rs
           grep -n '^pub const FORGEJO_IMAGE' crates/fjo-itest/src/lib.rs
+
+          # EXPECTED_VERSION only. The counts beside it are an independent oracle —
+          # "if the numbers disagree, the loader is wrong, not the expectations" — so
+          # CI must never write them from the loader's own output; that would have the
+          # loader grade its own homework. When the API did not change there is no such
+          # risk: the two specs differ only in `info.version`, so every count is still
+          # verified against the same API and only the label saying which version
+          # verified them is stale. Bump that and the PR arrives green. `spec-stats`
+          # WITH verification is the proof, and the job fails if it does not agree.
+          if [ "$DRIFT" = false ]; then
+            sed -i -E "s/^(pub const EXPECTED_VERSION: &str = )\"[0-9.]+\";/\1\"${version}\";/" \
+              crates/xtask/src/stats.rs
+            grep -n '^pub const EXPECTED_VERSION' crates/xtask/src/stats.rs
+            cargo xtask spec-stats > stats.txt 2>&1
+          else
+            cargo xtask spec-stats --no-verify > stats.txt 2>&1 || true
+          fi
 
           breaking=false
           if ! mise run codegen 2> codegen.log; then
@@ -265,16 +388,46 @@ jobs:
           echo "breaking=${breaking}" >> "$GITHUB_OUTPUT"
 
       - name: Compose the pull request body
+        id: pr
         if: steps.diff.outputs.bump == 'true'
         env:
-          TAG: ${{ steps.tags.outputs.latest }}
-          VENDORED: ${{ steps.tags.outputs.vendored }}
+          TAG: ${{ needs.resolve.outputs.latest }}
+          VENDORED: ${{ needs.resolve.outputs.vendored }}
+          DRIFT: ${{ steps.diff.outputs.drift }}
           BREAKING: ${{ steps.regen.outputs.breaking }}
         run: |
           set -euo pipefail
           run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          # The commit type is the honest one for what changed. A version-only bump adds
+          # no API surface, so it is a chore and release-please should cut a patch.
+          if [ "$DRIFT" = true ]; then
+            title="feat(spec): update Forgejo API spec to ${TAG}"
+          else
+            title="chore(spec): bump vendored Forgejo spec to ${TAG} (no API change)"
+          fi
+          echo "title=${title}" >> "$GITHUB_OUTPUT"
+
           {
             echo "Automated by [Spec drift](${run_url}): the vendored Forgejo API spec is \`${VENDORED}\` and the latest release is \`${TAG}\`."
+            echo
+            # `.gitattributes` marks generated code and the vendored spec `-diff`, so both
+            # `git diff` and the GitHub review UI hide them by default. Anyone told to read
+            # the diff needs to be told that too, or they get "Binary files differ".
+            if [ "$DRIFT" = true ]; then
+              echo "**Upstream changed the API in this release.** The diff under \`crates/\` is the changelog for it; read it with \`git diff --text\`, since generated code is marked \`-diff\` in \`.gitattributes\`."
+            else
+              echo "> [!NOTE]"
+              echo "> **No API change.** \`${TAG}\` and \`${VENDORED}\` describe the same API. The two vendored specs differ by exactly one line — \`info.version\` — and \`spec-diff\` confirms it by canonicalizing both against the same version and finding nothing."
+              echo ">"
+              echo "> That makes this a version-only bump, and this is the whole of it:"
+              echo ">"
+              echo "> - \`spec/lock.toml\`, the canonical spec's file name, and its sha256 — which moves because \`info.version\` is inside the hashed bytes."
+              echo "> - Two lines of ordinary source: \`FORGEJO_IMAGE\` in \`crates/fjo-itest/src/lib.rs\` and \`EXPECTED_VERSION\` in \`crates/xtask/src/stats.rs\`."
+              echo "> - Every generated file, each changed by the same two header lines naming the spec it came from, and nothing else."
+              echo ">"
+              echo "> So expect a few hundred changed files with no substance in them. \`.gitattributes\` marks them \`-diff\` and \`linguist-generated\`, so GitHub collapses them and \`git diff\` calls them binary; \`git diff --text\` shows the two header lines."
+            fi
             echo
             echo "This branch is rewritten on every run until it is merged or the tag moves on. Push fixes to it freely; the next run rebuilds on top of \`main\` and keeps the branch name."
             echo
@@ -285,8 +438,13 @@ jobs:
             fi
             echo "## Before merging"
             echo
-            echo "- [ ] Update \`EXPECTED_VERSION\` and the counts in \`crates/xtask/src/stats.rs\` from the table below, then run \`cargo xtask spec-stats\` — it must pass. Those counts are the loader's independent self-test and are the one thing this workflow will not write for you."
-            echo "- [ ] Read the diff under \`crates/\`: it is the API changelog for this release."
+            if [ "$DRIFT" = true ]; then
+              echo "- [ ] Update \`EXPECTED_VERSION\` and the counts in \`crates/xtask/src/stats.rs\` from the table below, then run \`cargo xtask spec-stats\` — it must pass. Those counts are the loader's independent self-test and are the one thing this workflow will not write for you."
+              echo "- [ ] Read the diff under \`crates/\`: it is the API changelog for this release."
+            else
+              echo "- [ ] Nothing to re-derive in \`crates/xtask/src/stats.rs\`. The API is unchanged, so every independently-verified count still holds; only \`EXPECTED_VERSION\` — the label saying which version they were verified against — moved, and this run already moved it. \`cargo xtask spec-stats\` passed **with** verification below; that is the proof, and the job fails if it does not."
+              echo "- [ ] Skim \`git diff -- crates/ ':!*/generated/*'\` — it should be empty apart from \`FORGEJO_IMAGE\` and \`EXPECTED_VERSION\`."
+            fi
             echo "- [ ] Confirm the \`Integration\` job booted \`codeberg.org/forgejo/forgejo:${TAG#v}\` (the constant in \`crates/fjo-itest/src/lib.rs\` was updated here)."
             if [ "$BREAKING" = true ]; then
               echo "- [ ] Retitle this PR with a \`!\` (e.g. \`feat(spec)!: …\`) so release-please cuts a major, and copy the rename report into the changelog."
@@ -302,7 +460,11 @@ jobs:
               echo '```'
               echo
             fi
-            echo "## \`cargo xtask spec-stats --no-verify\`"
+            if [ "$DRIFT" = true ]; then
+              echo "## \`cargo xtask spec-stats --no-verify\`"
+            else
+              echo "## \`cargo xtask spec-stats\` (verified against the bumped \`EXPECTED_VERSION\`)"
+            fi
             echo
             echo '```'
             cat stats.txt
@@ -317,18 +479,19 @@ jobs:
           token: ${{ secrets.SPEC_BOT_TOKEN || github.token }}
           # A fixed name per tag, so a second run for the same release updates the
           # PR in place instead of opening a twin.
-          branch: spec/bump-${{ steps.tags.outputs.latest }}
+          branch: spec/bump-${{ needs.resolve.outputs.latest }}
           delete-branch: true
           base: main
           commit-message: |
-            feat(spec): update Forgejo API spec to ${{ steps.tags.outputs.latest }}
+            ${{ steps.pr.outputs.title }}
 
             Vendored by the spec-drift workflow: `cargo xtask update-spec --version
-            ${{ steps.tags.outputs.latest }}` followed by `cargo xtask codegen`.
-          title: "feat(spec): update Forgejo API spec to ${{ steps.tags.outputs.latest }}"
+            ${{ needs.resolve.outputs.latest }}` followed by `cargo xtask codegen`.
+          title: ${{ steps.pr.outputs.title }}
           body-path: pr-body.md
           labels: |
             spec-bump
+            ${{ steps.diff.outputs.drift == 'true' && 'spec-api-change' || 'spec-version-only' }}
             ${{ steps.regen.outputs.breaking == 'true' && 'breaking' || '' }}
           # Never leave the workflow's scratch files in the commit.
           add-paths: |

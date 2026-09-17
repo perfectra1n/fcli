@@ -124,14 +124,28 @@ mise run spec-diff -- --branch forgejo   # the development branch: what is comin
 
 `spec-diff` canonicalizes the upstream document exactly as `update-spec` does and prints a Markdown report — operations added, removed and changed, parameter changes, **response status and schema changes**, shared-response changes with the operations that use them, and definition property changes — instead of an 850 KB JSON diff. It exits 3 when the two differ, which is what the automation below branches on.
 
+The left-hand side defaults to the vendored spec and moves with `--baseline-tag`, `--baseline-branch` or `--baseline-file`. That is how you ask the question the vendored comparison cannot answer — *has upstream released this yet?*
+
+```bash
+mise run spec-diff -- --baseline-tag v16.0.5 --branch forgejo   # what main has and no release does
+```
+
+Both sides are canonicalized against the *vendored* version, so `info.version` never shows up as a difference no matter which two refs you compare.
+
 ### The automation
 
-[`spec-drift.yaml`](.github/workflows/spec-drift.yaml) runs `spec-diff` daily against two upstream refs:
+[`spec-drift.yaml`](.github/workflows/spec-drift.yaml) runs daily and splits upstream's changes by whether they are **released**, because that is what decides whether there is anything to do:
 
-- **the `forgejo` development branch** — the report goes into one tracking issue labelled `spec-drift`, rewritten on every run and closed when the drift disappears. Nothing is bumped: it is an early warning that a response shape is moving.
-- **the latest release tag** — on any difference, or on a newer tag with an identical spec, the workflow runs the three commands above (`update-spec --no-verify`, `spec-stats`, `codegen`) and opens a pull request on `spec/bump-<tag>`, labelled `spec-bump`. If codegen refuses because a command was renamed or removed, it retries with the accept flags and labels the PR `breaking`; the rename report is in the PR body.
+- **unreleased** — it diffs the latest release tag against the `forgejo` branch, so the report holds only what no release has. That goes into one tracking issue labelled `spec-drift`, rewritten on every run and closed when the branch stops being ahead of upstream's own latest release. Nothing is bumped, because there is no tag to vendor: it is an early warning that a response shape is moving.
+- **released** — it diffs the vendored spec against the latest release tag. On any difference, or on a newer tag with an identical spec, the workflow runs the three commands above (`update-spec --no-verify`, `spec-stats`, `codegen`) and opens a pull request on `spec/bump-<tag>`, labelled `spec-bump`. If codegen refuses because a command was renamed or removed, it retries with the accept flags and labels the PR `breaking`; the rename report is in the PR body.
 
-The one step it deliberately leaves to a human is `stats.rs`: its expected counts are the loader's independent self-test, so the PR body carries the new `spec-stats` table and a checklist item to transcribe it. A `SPEC_BOT_TOKEN` repository secret (a fine-grained PAT with contents and pull-requests write) makes CI run on the bot's PR; without it, GitHub's rule that `GITHUB_TOKEN` cannot trigger workflows means the PR needs a close/reopen or a push first.
+The issue names both refs in its title and leads with a table saying which side each change came from, so "upstream is only thinking about this" never reads as "you are behind".
+
+A newer tag whose spec is identical to the vendored one is still a bump — `lock.toml`, the canonical file name and the itest image all carry the version — so that PR is labelled `spec-version-only` and says plainly that no operation, definition or field moved. Without that it looks alarming: the two specs differ by one line (`info.version`), but every generated file's `@generated` header names the spec it came from, so a few hundred files change by two header lines each. A PR that does change the API is labelled `spec-api-change`.
+
+`stats.rs` is where the automation stops. Its expected counts are the loader's independent self-test — *if the numbers disagree, the loader is wrong, not the expectations* — so CI must never write them from the loader's own output. On a real API change the PR body carries the new `spec-stats` table and a checklist item to transcribe it. The one exception is the version-only bump: the API did not change, so every count still holds and only `EXPECTED_VERSION` is stale. CI moves that single constant and then runs `cargo xtask spec-stats` **with** verification; the job fails if it does not agree, which is what keeps the oracle honest.
+
+A `SPEC_BOT_TOKEN` repository secret (a fine-grained PAT with contents and pull-requests write) makes CI run on the bot's PR; without it, GitHub's rule that `GITHUB_TOKEN` cannot trigger workflows means the PR needs a close/reopen or a push first.
 
 ## mise is the source of truth for tools and tasks
 

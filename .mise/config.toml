@@ -108,14 +108,17 @@ description = "Vendor the Forgejo Swagger spec at a release tag into spec/ (args
 run = "cargo xtask update-spec"
 
 [tasks.spec-diff]
-description = "Markdown report of how an upstream spec differs from the vendored one (args: --tag vX | --branch forgejo | --file p)"
+description = "Markdown report of how an upstream spec differs from another (args: --tag vX | --branch forgejo | --file p, optionally --baseline-tag vY)"
 run = '''
 set -eu
 # Exit status 3 means "they differ" — distinct from 1 so that
 # .github/workflows/spec-drift.yaml can branch on drift versus a real failure.
-# Run daily there against the `forgejo` development branch (tracking issue) and
-# the latest release tag (bump PR); run here to answer "what changed upstream"
-# before a bump, e.g. `mise run spec-diff -- --tag v16.0.5`.
+# Run daily there twice: vendored against the latest release tag (bump PR), and
+# the latest release tag against the `forgejo` branch (tracking issue) — the
+# second is the one that reports only what upstream has NOT released yet.
+# Run here to answer "what changed upstream" before a bump, e.g.
+#   mise run spec-diff -- --tag v16.0.5
+#   mise run spec-diff -- --baseline-tag v16.0.5 --branch forgejo
 cargo xtask spec-diff "$@"
 '''
 

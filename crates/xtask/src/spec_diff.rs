@@ -1,6 +1,13 @@
 //! `cargo xtask spec-diff --tag v16.0.5` / `--branch forgejo` / `--file path.json`.
 //!
 //! A *semantic* diff between the vendored spec and an upstream one, rendered as Markdown.
+//!
+//! The left-hand side defaults to the vendored spec and can be moved with `--baseline-tag`,
+//! `--baseline-branch` or `--baseline-file`. That is what answers the question the vendored
+//! comparison cannot: `--baseline-tag v16.0.5 --branch forgejo` reports what is on upstream's
+//! development branch **and in no release yet**. A change in that report is a preview; a
+//! change in `--tag v16.0.5` is already shipped and a bump will bring it in. Same report,
+//! opposite meanings, and the spec-drift workflow labels the issue with both.
 //! `git diff` on two 850 KB JSON files answers "did anything change"; this answers the
 //! question a maintainer actually has — *which operations changed, and did a response shape
 //! move* — because a changed response is what turns into a deserialization failure or a
@@ -45,6 +52,10 @@ pub enum Source {
 /// One side of the comparison, as the report describes it.
 #[derive(Debug, Clone)]
 pub struct Side {
+    /// The first column of the header table: `vendored`, `baseline` or `upstream`. With a
+    /// `--baseline-*` the left-hand side is no longer the vendored spec, and the table has to
+    /// say so or the report reads as a claim about `spec/`.
+    pub role: String,
     pub label: String,
     pub sha256: String,
 }
@@ -79,8 +90,8 @@ impl Report {
     pub fn render(&self, old: &Side, new: &Side) -> String {
         let mut md = String::from("# Forgejo API spec drift\n\n");
         md.push_str("| side | source | sha256 (canonical) |\n|---|---|---|\n");
-        md.push_str(&format!("| vendored | {} | `{}` |\n", old.label, old.sha256));
-        md.push_str(&format!("| upstream | {} | `{}` |\n\n", new.label, new.sha256));
+        md.push_str(&format!("| {} | {} | `{}` |\n", old.role, old.label, old.sha256));
+        md.push_str(&format!("| {} | {} | `{}` |\n\n", new.role, new.label, new.sha256));
 
         if !self.has_drift() {
             md.push_str("No differences.\n");
@@ -590,10 +601,15 @@ fn generator_warnings(new: &Value) -> Vec<String> {
 /// Fetches (or reads) the upstream document, canonicalizes it against the vendored version,
 /// diffs, and writes the report to `out` (or stdout). Returns the report so `main` can pick
 /// the exit code.
-pub fn run(root: &Path, source: &Source, out: Option<&Path>) -> Result<Report> {
-    let loaded = crate::spec::load(root)?;
-
-    let upstream = match (source, source.url()) {
+/// Fetches (or reads) one side of the comparison and canonicalizes it.
+///
+/// `version` is the *vendored* version for both sides, always. [`canonicalize`] writes it into
+/// `info.version`, so two upstream refs compared against each other do not report the version
+/// string itself as a difference.
+///
+/// [`canonicalize`]: crate::update_spec::canonicalize
+fn fetch_side(source: &Source, role: &str, version: &str) -> Result<(String, Side)> {
+    let text = match (source, source.url()) {
         (Source::File(path), _) => std::fs::read_to_string(path)
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?,
         (_, Some(url)) => {
@@ -606,22 +622,44 @@ pub fn run(root: &Path, source: &Source, out: Option<&Path>) -> Result<Report> {
     // Either the raw Go template or an already-canonical JSON document is accepted, so a
     // report can be reproduced offline from a saved file. Only the template carries
     // placeholders, and only then does the placeholder guard apply.
-    if !crate::update_spec::find_placeholders(&upstream).is_empty() {
-        crate::update_spec::check_placeholders(&upstream)?;
+    if !crate::update_spec::find_placeholders(&text).is_empty() {
+        crate::update_spec::check_placeholders(&text)?;
     }
-    let json = crate::update_spec::canonicalize(&upstream, &loaded.lock.version)?;
+    let json = crate::update_spec::canonicalize(&text, version)?;
+    let sha256 = crate::spec::sha256_hex(json.as_bytes());
+    Ok((json, Side { role: role.to_owned(), label: source.describe(), sha256 }))
+}
 
-    let old: Value = serde_json::from_str(&loaded.json)?;
-    let new: Value = serde_json::from_str(&json)?;
-    let report = diff(&old, &new);
+/// Diffs `source` against `baseline`, or against the vendored spec when `baseline` is `None`.
+///
+/// A baseline is what makes the three-way question answerable: `--baseline-tag <latest>
+/// --branch forgejo` reports exactly what exists on the development branch and in no release
+/// yet, which is the difference between "wait" and "there is a bump to take".
+pub fn run(
+    root: &Path,
+    baseline: Option<&Source>,
+    source: &Source,
+    out: Option<&Path>,
+) -> Result<Report> {
+    let loaded = crate::spec::load(root)?;
 
-    let vendored = Side {
-        label: format!("`{}` (`spec/{}`)", loaded.lock.tag, loaded.lock.canonical),
-        sha256: loaded.lock.canonical_sha256.clone(),
+    let (old_json, old_side) = match baseline {
+        None => (
+            loaded.json.clone(),
+            Side {
+                role: "vendored".to_owned(),
+                label: format!("`{}` (`spec/{}`)", loaded.lock.tag, loaded.lock.canonical),
+                sha256: loaded.lock.canonical_sha256.clone(),
+            },
+        ),
+        Some(b) => fetch_side(b, "baseline", &loaded.lock.version)?,
     };
-    let upstream_side =
-        Side { label: source.describe(), sha256: crate::spec::sha256_hex(json.as_bytes()) };
-    let md = report.render(&vendored, &upstream_side);
+    let (new_json, new_side) = fetch_side(source, "upstream", &loaded.lock.version)?;
+
+    let old: Value = serde_json::from_str(&old_json)?;
+    let new: Value = serde_json::from_str(&new_json)?;
+    let report = diff(&old, &new);
+    let md = report.render(&old_side, &new_side);
 
     match out {
         Some(path) => {
@@ -631,10 +669,15 @@ pub fn run(root: &Path, source: &Source, out: Option<&Path>) -> Result<Report> {
         }
         None => print!("{md}"),
     }
+
+    let against = match baseline {
+        None => source.describe(),
+        Some(b) => format!("{} (baseline {})", source.describe(), b.describe()),
+    };
     if report.has_drift() {
         eprintln!("drift: {}", report.summary());
     } else {
-        eprintln!("no drift against {}", source.describe());
+        eprintln!("no drift against {against}");
     }
     Ok(report)
 }
@@ -645,7 +688,7 @@ mod tests {
     use serde_json::json;
 
     fn side(label: &str) -> Side {
-        Side { label: label.to_owned(), sha256: "0".repeat(64) }
+        Side { role: "vendored".to_owned(), label: label.to_owned(), sha256: "0".repeat(64) }
     }
 
     /// A minimal canonical spec: one operation with a `200` response pointing at a
@@ -891,6 +934,37 @@ mod tests {
     }
 
     #[test]
+    fn the_header_table_labels_each_side_by_its_role() {
+        // Without this the release-vs-branch report would announce a release tag as the
+        // "vendored" spec, which is the exact confusion the baseline exists to remove.
+        let mut old = side("tag `v16.0.5`");
+        old.role = "baseline".to_owned();
+        let mut new = side("branch `forgejo`");
+        new.role = "upstream".to_owned();
+        let md = Report::default().render(&old, &new);
+        assert!(md.contains("| baseline | tag `v16.0.5` |"), "{md}");
+        assert!(md.contains("| upstream | branch `forgejo` |"), "{md}");
+        assert!(!md.contains("| vendored |"), "{md}");
+    }
+
+    #[test]
+    fn a_baseline_replaces_the_vendored_side() {
+        // The vendored template as *both* sides. It has to canonicalize to the committed JSON
+        // byte-for-byte, so this is a no-drift run that never touches the network — and it
+        // proves the baseline goes through the same canonicalize step the vendored side does,
+        // which is what stops `info.version` showing up as a difference.
+        let root = crate::workspace_root();
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("report.md");
+        let tmpl = Source::File(crate::spec::tmpl_path(&root));
+        let r = run(&root, Some(&tmpl), &tmpl, Some(&out)).unwrap();
+        assert!(!r.has_drift(), "{r:?}");
+        let md = std::fs::read_to_string(&out).unwrap();
+        assert!(md.contains("| baseline |"), "{md}");
+        assert!(!md.contains("| vendored |"), "{md}");
+    }
+
+    #[test]
     fn run_against_the_vendored_template_itself_reports_no_drift() {
         // The vendored `spec/v1_json.tmpl` is exactly what `update-spec` fetched, so feeding
         // it back through `--file` must canonicalize to the committed JSON byte-for-byte.
@@ -898,7 +972,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("report.md");
         let src = Source::File(crate::spec::tmpl_path(&root));
-        let r = run(&root, &src, Some(&out)).unwrap();
+        let r = run(&root, None, &src, Some(&out)).unwrap();
         assert!(!r.has_drift(), "{r:?}");
         let md = std::fs::read_to_string(&out).unwrap();
         assert!(md.contains("No differences"), "{md}");
