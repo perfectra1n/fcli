@@ -171,6 +171,10 @@ enum Cmd {
         allow_skip: bool,
         /// Only run tests whose name contains this.
         filter: Option<String>,
+        /// Wall-clock ceiling for the whole suite, in seconds. `cargo test` has no timeout of
+        /// its own, so without this a hung test hangs the run forever.
+        #[arg(long)]
+        timeout_secs: Option<u64>,
     },
 }
 
@@ -251,9 +255,16 @@ fn run_unit(root: &Path, cmd: Cmd) -> Result<()> {
             coverage::run(root, coverage::Options { dir, raw_budget, porcelain_budget, list })
         }
 
-        Cmd::Itest { keep, image, allow_skip, filter } => {
-            itest::run(root, itest::Options { keep, image, allow_skip, filter })
-        }
+        Cmd::Itest { keep, image, allow_skip, filter, timeout_secs } => itest::run(
+            root,
+            itest::Options {
+                keep,
+                image,
+                allow_skip,
+                filter,
+                timeout: timeout_secs.map(std::time::Duration::from_secs),
+            },
+        ),
 
         Cmd::Codegen { check, check_names, dump_ir, accept_renames, accept_removals } => {
             let loaded = spec::load(root)?;
