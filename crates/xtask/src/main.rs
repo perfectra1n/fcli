@@ -93,14 +93,20 @@ enum Cmd {
         no_verify: bool,
     },
 
-    /// Compare the vendored spec against an upstream one and print a Markdown report of what
-    /// moved: operations, parameters, response shapes, shared responses, definitions.
+    /// Compare two specs and print a Markdown report of what moved: operations, parameters,
+    /// response shapes, shared responses, definitions.
+    ///
+    /// The right-hand side is the required `--tag`/`--branch`/`--file`. The left-hand side is
+    /// the vendored spec unless a `--baseline-*` moves it: `--baseline-tag <latest> --branch
+    /// forgejo` reports what upstream has on its development branch and in no release yet.
     ///
     /// Exit status is 0 when the two agree, 3 when they differ, 1 on error — so
     /// `.github/workflows/spec-drift.yaml` can branch on drift without parsing the report.
     SpecDiff {
         #[command(flatten)]
         source: SpecDiffSource,
+        #[command(flatten)]
+        baseline: SpecDiffBaseline,
         /// Write the report here instead of stdout.
         #[arg(long)]
         out: Option<PathBuf>,
@@ -193,6 +199,36 @@ struct SpecDiffSource {
     file: Option<PathBuf>,
 }
 
+/// Moves the left-hand side of `spec-diff` off the vendored spec. Optional; at most one.
+///
+/// `--baseline-tag <latest> --branch forgejo` is the comparison that separates "upstream has
+/// released this, take the bump" from "upstream is only thinking about this, wait".
+#[derive(Args)]
+#[group(required = false, multiple = false)]
+struct SpecDiffBaseline {
+    /// Compare against this release tag instead of the vendored spec.
+    #[arg(long)]
+    baseline_tag: Option<String>,
+    /// Compare against this branch instead of the vendored spec.
+    #[arg(long)]
+    baseline_branch: Option<String>,
+    /// Compare against this local file instead of the vendored spec.
+    #[arg(long)]
+    baseline_file: Option<PathBuf>,
+}
+
+impl SpecDiffBaseline {
+    fn into_source(self) -> Option<spec_diff::Source> {
+        match (self.baseline_tag, self.baseline_branch, self.baseline_file) {
+            (Some(tag), _, _) => Some(spec_diff::Source::Tag(tag)),
+            (_, Some(branch), _) => Some(spec_diff::Source::Branch(branch)),
+            (_, _, Some(path)) => Some(spec_diff::Source::File(path)),
+            // clap's group rules make more than one unreachable; none means the vendored spec.
+            (None, None, None) => None,
+        }
+    }
+}
+
 impl SpecDiffSource {
     fn into_source(self) -> Result<spec_diff::Source> {
         match (self.tag, self.branch, self.file) {
@@ -219,8 +255,10 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<ExitCode> {
     let root = workspace_root();
     match cli.cmd {
-        Cmd::SpecDiff { source, out } => {
-            let report = spec_diff::run(&root, &source.into_source()?, out.as_deref())?;
+        Cmd::SpecDiff { source, baseline, out } => {
+            let baseline = baseline.into_source();
+            let report =
+                spec_diff::run(&root, baseline.as_ref(), &source.into_source()?, out.as_deref())?;
             Ok(if report.has_drift() {
                 ExitCode::from(spec_diff::DRIFT_EXIT_CODE)
             } else {
