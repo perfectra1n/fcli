@@ -121,7 +121,7 @@ impl std::fmt::Debug for Instance {
 impl Instance {
     /// Attach to `FJO_TEST_HOST` if configured, else boot a container. `Ok(None)` means
     /// neither is available and the caller should skip.
-    pub fn acquire() -> Result<Option<Self>, String> {
+    pub fn acquire(extra_env: &[(&str, &str)]) -> Result<Option<Self>, String> {
         if let (Ok(host), Ok(token)) =
             (std::env::var("FJO_TEST_HOST"), std::env::var("FJO_TEST_TOKEN"))
         {
@@ -129,7 +129,7 @@ impl Instance {
             let user = std::env::var("FJO_TEST_USER").unwrap_or_else(|_| ADMIN_USER.to_owned());
             return Ok(Some(Self { base_url, token, user, container: None, keep: true }));
         }
-        Self::boot()
+        Self::boot(extra_env)
     }
 
     /// Start a throwaway Forgejo with `testcontainers`.
@@ -175,12 +175,12 @@ impl Instance {
     /// The second start is paid only where the guess is wrong, which is precisely the
     /// docker-out-of-docker and remote-daemon topologies this change exists for. On a developer's
     /// machine the guess is right and there is exactly one container, as before.
-    fn boot() -> Result<Option<Self>, String> {
+    fn boot(extra_env: &[(&str, &str)]) -> Result<Option<Self>, String> {
         reap_stale();
         let port = pick_port();
         let mut root_url = format!("http://localhost:{port}/");
 
-        let mut container = match Self::start_container(port, &root_url) {
+        let mut container = match Self::start_container(port, &root_url, extra_env) {
             Ok(c) => c,
             Err(e) => {
                 // Distinguish "there is no Docker here" (skip, so `cargo test --workspace` still
@@ -202,7 +202,7 @@ impl Instance {
             // Dropping removes it, synchronously, which also releases the published port before
             // the replacement asks for it again.
             drop(container);
-            container = Self::start_container(port, &root_url)
+            container = Self::start_container(port, &root_url, extra_env)
                 .map_err(|e| format!("could not restart Forgejo at {root_url}: {e}"))?;
             base_url = reachable_url(&container)?;
             if format!("{base_url}/") != root_url {
@@ -250,6 +250,7 @@ impl Instance {
     fn start_container(
         port: u16,
         root_url: &str,
+        extra_env: &[(&str, &str)],
     ) -> Result<Container<GenericImage>, testcontainers::TestcontainersError> {
         let keep = std::env::var_os("FJO_ITEST_KEEP").is_some();
         let (name, tag) = split_image(&image());
@@ -258,7 +259,7 @@ impl Instance {
         // pids are recycled, and a leftover holding the name would make the next run fail to
         // create rather than fail to reap.
         let container_name = format!("{LABEL}-{}-{port}", std::process::id());
-        GenericImage::new(name, tag)
+        let mut request = GenericImage::new(name, tag)
             .with_exposed_port(ContainerPort::Tcp(FORGEJO_PORT))
             .with_mapped_port(port, ContainerPort::Tcp(FORGEJO_PORT))
             .with_container_name(container_name)
@@ -294,16 +295,17 @@ impl Instance {
             .with_env_var("FORGEJO__quota__ENABLED", "true")
             // Repository flags ON, same story again: `[repository] ENABLE_FLAGS` gates whether
             // the six `/repos/{owner}/{repo}/flags*` routes are registered at all.
-            .with_env_var("FORGEJO__repository__ENABLE_FLAGS", "true")
-            // Federation ON. `[federation] ENABLED` gates the `/activitypub/*` routes and
-            // `POST /user/activitypub/follow`. The six ActivityPub GETs become real coverage;
-            // the five inbox/outbox POSTs still need a second instance and HTTP-signed
-            // payloads, which is what `spec/live-coverage.toml` records.
-            .with_env_var("FORGEJO__federation__ENABLED", "true")
-            // Deliberately no `with_startup_timeout`: it bounds a *readiness condition*, and
-            // there are none here, so setting it would promise a guarantee it does not give.
-            // [`Instance::wait_healthy`] is the clock, and it is the one with the diagnosis.
-            .start()
+            .with_env_var("FORGEJO__repository__ENABLE_FLAGS", "true");
+
+        // Settings only one caller wants, folded in last so they can also override the above.
+        for (key, value) in extra_env {
+            request = request.with_env_var(*key, *value);
+        }
+
+        // Deliberately no `with_startup_timeout`: it bounds a *readiness condition*, and
+        // there are none here, so setting it would promise a guarantee it does not give.
+        // [`Instance::wait_healthy`] is the clock, and it is the one with the diagnosis.
+        request.start()
     }
 
     /// Poll `/api/healthz` until Forgejo reports itself up. Typically two seconds; the generous
@@ -646,7 +648,42 @@ fn owner_may_still_be_running(pid: u32) -> bool {
 /// labelled so nothing else is touched.
 pub fn shared() -> Result<Option<&'static Instance>, String> {
     static SHARED: OnceLock<Result<Option<Instance>, String>> = OnceLock::new();
-    match SHARED.get_or_init(Instance::acquire) {
+    match SHARED.get_or_init(|| Instance::acquire(&[])) {
+        Ok(Some(i)) => Ok(Some(i)),
+        Ok(None) => Ok(None),
+        Err(e) => Err(e.clone()),
+    }
+}
+
+/// Settings a *federating* instance needs, and which the shared one must not have.
+///
+/// `[federation] ENABLED` gates the `/activitypub/*` routes, so without it those operations
+/// answer a router 404 and a test against one learns nothing.
+///
+/// It is not on the shared instance because it is not free. On Forgejo 16.0.4, with federation
+/// enabled, `PUT /user/starred/{owner}/{repo}` answers **HTTP 500** —
+/// `StarRepo: client: invalid host for HostMatcher: nil client host(s)`. Reproduced on a bare
+/// container with federation as the only non-default setting, and not fixed by `OFFLINE_MODE`
+/// or by `[federation] ALLOWED_HOST_LIST = *`. Watching is unaffected.
+///
+/// So enabling it everywhere would trade a handful of ActivityPub routes for the ability to
+/// star a repository at all — and silently, in whichever unrelated test happened to star one.
+/// A second container is the honest price.
+const FEDERATION_ENV: &[(&str, &str)] = &[("FORGEJO__federation__ENABLED", "true")];
+
+/// A second instance, with federation on, for the ActivityPub tests alone.
+///
+/// Separate from [`shared`] rather than a flag on it, for the reason on [`FEDERATION_ENV`].
+/// Boots lazily, so a binary that never asks for one never pays for it.
+///
+/// When `FJO_TEST_HOST` names an instance, this returns that one: whether somebody else's
+/// server federates is a fact to be discovered by the tests, not something this can arrange.
+pub fn federated() -> Result<Option<&'static Instance>, String> {
+    if std::env::var_os("FJO_TEST_HOST").is_some() {
+        return shared();
+    }
+    static FEDERATED: OnceLock<Result<Option<Instance>, String>> = OnceLock::new();
+    match FEDERATED.get_or_init(|| Instance::acquire(FEDERATION_ENV)) {
         Ok(Some(i)) => Ok(Some(i)),
         Ok(None) => Ok(None),
         Err(e) => Err(e.clone()),
