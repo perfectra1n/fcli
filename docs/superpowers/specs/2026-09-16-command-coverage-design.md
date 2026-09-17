@@ -47,14 +47,23 @@ This is the only plane that can prove the server agrees with the vendored specif
 
 `cargo xtask coverage-check`, driven by `mise run coverage-check`:
 
+Measured on landing:
+
 ```
 ==> command coverage
 
   plane     surface       covered   total    gap   budget
   contract  raw ops           506     506      0        0
-  live      raw ops           118     506    388      388
-  live      porcelain          61     244    183      183
+  live      raw ops           494     495      1        1
+  live      porcelain         243     244      1        1
+
+  11 operation(s) held unreachable by spec/live-coverage.toml
 ```
+
+Both budgets are 1, and the same defect is behind both: `fjo user token create` always sends
+`"repositories": []` and Forgejo answers 400. It is deliberately **not** exempted — the route
+works, our command does not, and an exemption would hide a real bug behind a clean number. That
+budget drains to zero by fixing the bug, which is the only kind of debt a ratchet should carry.
 
 Both halves of `docs/ratchets.md`: over budget fails with a message about writing the test and
 never about raising the number; under budget prints the note that stops a budget rotting.

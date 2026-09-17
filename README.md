@@ -4,8 +4,8 @@ A command-line interface for [Forgejo](https://forgejo.org), with commands simil
 
 Use `fjo pr`, `fjo issue`, and `fjo repo` for common tasks. For other API operations,
 use `fjo raw` or `fjo api`. The generated `raw` commands cover all 506 operations in the
-bundled Forgejo 16.0.4 API specification. Tests check that each operation has a command;
-this does not mean every operation has been tested against a server.
+bundled Forgejo 16.0.4 API specification, and 494 of them are driven against a real Forgejo
+by the integration suite.
 
 ## Install
 
@@ -41,18 +41,34 @@ Use `fjo --help` to list command groups, or add `--help` to any command.
 
 ## Status
 
-`fjo` is under active development. Test coverage varies by command.
+`fjo` is under active development. Coverage is measured rather than described:
 
-The Docker integration suite tests against Forgejo 16.0.4. It covers authentication,
-configuration, aliases, completions, status, selected admin operations, and parts of the
-pull request, repository, issue, label, release, and topic commands. AGit tests create a
-pull request with a real push, update it with another push, and check that no branch was created.
+| Plane | Surface | Covered |
+| --- | --- | --- |
+| Request contract (hermetic) | generated operations | 506 / 506 |
+| Against a real Forgejo | generated operations | 494 / 495 |
+| Against a real Forgejo | porcelain commands | 243 / 244 |
 
-Many commands have only mock-based tests and output snapshots. These check requests and
-formatting, but cannot confirm server behavior. Actions runner operations, streaming,
-non-JSON responses, retry behavior, and token redaction are not covered by the Docker suite.
+The contract plane checks that every generated command composes the request its metadata
+declares — method, path substitution, per-parameter encoding, query keys, body types. It runs
+in the ordinary test suite and needs no Docker.
 
-The integration tests run through `mise run itest`; the normal test task excludes them.
+The live plane boots a throwaway Forgejo 16.0.4 and drives real lifecycles against it. It is
+the only thing that can show the server disagreeing with its own published specification, and
+it regularly does.
+
+Eleven operations are held unreachable in
+[`spec/live-coverage.toml`](spec/live-coverage.toml), each with a reason and what would unblock
+it: ten ActivityPub routes that need a second federating instance and HTTP-signed requests, and
+one Actions log route that needs a runner. The single remaining gap on each plane is one
+command with an open defect, not missing tests.
+
+```bash
+mise run test             # hermetic: contract plane included, no Docker
+mise run itest            # the live plane (needs Docker)
+mise run coverage-check   # both, then the ratchet that prints the table above
+```
+
 See [`crates/fjo-itest/tests/`](crates/fjo-itest/tests/) for the cases covered.
 
 One known limitation: permission advice for `fjo api` infers the required token scope from
