@@ -295,6 +295,11 @@ impl Instance {
             // Repository flags ON, same story again: `[repository] ENABLE_FLAGS` gates whether
             // the six `/repos/{owner}/{repo}/flags*` routes are registered at all.
             .with_env_var("FORGEJO__repository__ENABLE_FLAGS", "true")
+            // Federation ON. `[federation] ENABLED` gates the `/activitypub/*` routes and
+            // `POST /user/activitypub/follow`. The six ActivityPub GETs become real coverage;
+            // the five inbox/outbox POSTs still need a second instance and HTTP-signed
+            // payloads, which is what `spec/live-coverage.toml` records.
+            .with_env_var("FORGEJO__federation__ENABLED", "true")
             // Deliberately no `with_startup_timeout`: it bounds a *readiness condition*, and
             // there are none here, so setting it would promise a guarantee it does not give.
             // [`Instance::wait_healthy`] is the clock, and it is the one with the diagnosis.
