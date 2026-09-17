@@ -295,7 +295,16 @@ impl Instance {
             .with_env_var("FORGEJO__quota__ENABLED", "true")
             // Repository flags ON, same story again: `[repository] ENABLE_FLAGS` gates whether
             // the six `/repos/{owner}/{repo}/flags*` routes are registered at all.
-            .with_env_var("FORGEJO__repository__ENABLE_FLAGS", "true");
+            .with_env_var("FORGEJO__repository__ENABLE_FLAGS", "true")
+            // Let a migration name this instance as its source.
+            //
+            // `[migrations] ALLOW_LOCALNETWORKS` defaults to false, which refuses a clone URL
+            // pointing at the container itself ("You can not import from disallowed hosts").
+            // That made `repoMigrate` untestable without reaching the real internet — and with
+            // it, `repoConvert` and `repoMirrorSync`, which both need a pull mirror that only a
+            // migration can create. Migrating a repository on this instance to itself needs no
+            // network at all, which is the cheapest of the available answers.
+            .with_env_var("FORGEJO__migrations__ALLOW_LOCALNETWORKS", "true");
 
         // Settings only one caller wants, folded in last so they can also override the above.
         for (key, value) in extra_env {
@@ -492,6 +501,20 @@ impl Instance {
         // mostly migration chatter that pushes the interesting last lines off the screen.
         let lines: Vec<&str> = all.lines().collect();
         lines[lines.len().saturating_sub(60)..].join("\n")
+    }
+
+    /// The address this instance reaches **itself** at, from inside its own container.
+    ///
+    /// Not the same as [`Instance::base_url`], and the difference is the whole point.
+    /// `base_url` is the published port on the *host*; a process inside the container cannot
+    /// reach it, so a clone URL built from it fails with
+    /// `fatal: unable to access ... Connection refused` a long way from the cause.
+    ///
+    /// The one caller that needs this is migration: `POST /repos/migrate` makes **Forgejo**
+    /// clone the address, so the URL has to make sense where Forgejo is standing. Measured:
+    /// with `base_url` the migration is a 422, and with this it is a 201.
+    pub fn internal_url(&self) -> String {
+        format!("http://localhost:{FORGEJO_PORT}")
     }
 
     pub fn api_base(&self) -> String {
