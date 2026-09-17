@@ -9,13 +9,14 @@
 //! reporting "failed to merge PR, is it still open?" for every refusal while discarding the
 //! reason the server gave.
 
-use fjo_itest::{TestRepo, instance_or_skip};
+use fjo_itest::{TestRepo, cover, instance_or_skip};
 
 /// A 404 on the repository itself is genuinely ambiguous, and the message has to say so rather
 /// than picking one of the three causes and sounding confident.
 #[test]
 fn missing_repository_names_all_three_causes() {
     let inst = instance_or_skip!();
+    cover!(raw: ["repoGet"]);
     let run = inst.fjo(["raw", "repo", "get", &inst.user, "definitely-not-a-real-repo"]);
     run.assert_code(5, "a missing repository");
     run.assert_says("renamed, transferred, or deleted");
@@ -32,6 +33,7 @@ fn missing_repository_names_all_three_causes() {
 #[test]
 fn missing_resource_probes_the_repository_first() {
     let inst = instance_or_skip!();
+    cover!(porcelain: ["issue view"], hits: ["issueGetIssue", "repoGet"]);
     let repo = TestRepo::create(inst, "probe-404");
 
     let run = inst.fjo(["issue", "view", "99999", "-R", &repo.slug()]);
@@ -49,6 +51,7 @@ fn missing_resource_probes_the_repository_first() {
 #[test]
 fn insufficient_scope_names_the_scope() {
     let inst = instance_or_skip!();
+    cover!(porcelain: ["issue create"], hits: ["issueCreateIssue"]);
     let Ok(user) = inst.scoped_user("scoped", &["read:user", "read:repository", "read:issue"])
     else {
         // Creating a second account needs admin; against a borrowed instance we may not have it.
@@ -80,6 +83,7 @@ fn insufficient_scope_names_the_scope() {
 #[test]
 fn conflict_repeats_what_the_server_said() {
     let inst = instance_or_skip!();
+    cover!(porcelain: ["repo create"], hits: ["createCurrentUserRepo"]);
     let repo = TestRepo::create(inst, "conflict-409");
 
     let run = inst.fjo(["repo", "create", &repo.name, "--private"]);
@@ -184,6 +188,7 @@ fn validation_survives_a_null_invalid_topics() {
 #[test]
 fn post_to_a_collection_reports_the_real_reason() {
     let inst = instance_or_skip!();
+    cover!(porcelain: ["pr create"], hits: ["repoCreatePullRequest"]);
     let repo = TestRepo::create_initialized(inst, "post-404");
 
     let run = inst.fjo([

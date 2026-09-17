@@ -1095,40 +1095,47 @@ fn granting_a_team_access_to_an_organization_repository_shows_up_in_its_team_lis
     );
 }
 
-/// Subscribers, seeded by a *second* account, and stargazers cross-checked against the count the
-/// repository record carries.
+/// Stargazers and subscribers, seeded by a *second* account so neither list is trivially the
+/// owner. Forgejo subscribes an owner to their own repository automatically, which would make a
+/// single-account version of this pass without either endpoint working.
 ///
-/// Forgejo subscribes an owner to their own repository automatically, so a single-account version
-/// of the watcher half would pass without the endpoint working at all. Hence the second account.
-///
-/// The stargazer half is deliberately weaker, and the reason is a live defect rather than an
-/// oversight: with `[federation] ENABLED = true` — which this harness now sets so the ActivityPub
-/// routes reach a handler — Forgejo 16.0.4 answers `PUT /user/starred/{owner}/{repo}` with
-/// HTTP 500 and logs `StarRepo: client: invalid host for HostMatcher: nil client host(s)`.
-/// Reproduced on a bare container with federation as the only non-default setting, and unaffected
-/// by `OFFLINE_MODE` or by setting `ALLOWED_HOST_LIST`, so no test can put a star on a repository
-/// while federation is on. Watching is untouched.
-///
-/// So this asserts what is still true and checkable: the endpoint answers, and its list agrees
-/// with the `stars_count` on the repository record — two independent server-side views of the
-/// same fact. Restore the stronger version (a named account in the stargazer list) by scoping
-/// federation to the tests that need it, or when the upstream defect is fixed.
+/// The star half briefly could not be written at all: while `[federation] ENABLED` was set on the
+/// shared instance, Forgejo 16.0.4 answered `PUT /user/starred/{owner}/{repo}` with HTTP 500
+/// (`StarRepo: client: invalid host for HostMatcher: nil client host(s)`), unaffected by
+/// `OFFLINE_MODE` or `ALLOWED_HOST_LIST`. Federation now lives on its own instance, so this is a
+/// 204 again — and the strong assertion is back rather than a count cross-check standing in for
+/// it. Worth knowing if federation is ever enabled here again.
 #[test]
-fn a_second_account_watching_a_repository_appears_in_its_subscriber_list() {
+fn a_second_account_starring_and_watching_a_repository_appears_in_both_of_its_lists() {
     let inst = instance_or_skip!();
     let repo = TestRepo::create_initialized(inst, "rc-watch");
     repo.api("PATCH", "", Some(r#"{"private":false}"#));
     let fan = match inst.scoped_user("rcwatch", &["write:user", "write:repository", "read:user"]) {
         Ok(u) => u,
-        Err(e) => panic!("could not create the account that watches: {e}"),
+        Err(e) => panic!("could not create the account that stars and watches: {e}"),
     };
-    cover!(raw: ["repoListSubscribers", "repoListStargazers"]);
+    cover!(raw: ["repoListStargazers", "repoListSubscribers"]);
 
+    let (code, body) =
+        inst.api_as(&fan.token, "PUT", &format!("user/starred/{}", repo.slug()), None);
+    assert!(
+        (200..300).contains(&code),
+        "the second account could not star the repository: {code} {body}"
+    );
     let (code, body) =
         inst.api_as(&fan.token, "PUT", &format!("repos/{}/subscription", repo.slug()), None);
     assert!(
         (200..300).contains(&code),
         "the second account could not watch the repository: {code} {body}"
+    );
+
+    let stars =
+        inst.fjo(["raw", "repo", "list-stargazers", &repo.owner, &repo.name, "--json", "login"]);
+    stars.assert_ok("fjo raw repo list-stargazers");
+    assert!(
+        logins(&stars.json()).contains(&fan.name),
+        "the stargazer list does not name who starred it: {}",
+        stars.stdout
     );
 
     let watchers =
@@ -1138,18 +1145,6 @@ fn a_second_account_watching_a_repository_appears_in_its_subscriber_list() {
         logins(&watchers.json()).contains(&fan.name),
         "the subscriber list does not name the watcher: {}",
         watchers.stdout
-    );
-
-    let stars =
-        inst.fjo(["raw", "repo", "list-stargazers", &repo.owner, &repo.name, "--json", "login"]);
-    stars.assert_ok("fjo raw repo list-stargazers");
-    let listed = stars.json().as_array().map(Vec::len).unwrap_or(0);
-    let counted =
-        repo_json(inst, &repo.slug())["stars_count"].as_u64().unwrap_or_default() as usize;
-    assert_eq!(
-        listed, counted,
-        "the stargazer list and the repository's own stars_count disagree: {} vs {counted}",
-        stars.stdout
     );
 }
 
@@ -1394,28 +1389,41 @@ fn setting_a_repository_avatar_publishes_a_url_and_deleting_it_takes_the_url_awa
     );
 }
 
-/// Push mirrors, whose identity is a remote name the *server* invents. Every later call is
-/// addressed by that name, so nothing short of a live lifecycle proves the name in the create
-/// reply is the one the `GET` and `DELETE` routes accept.
+/// Push mirrors, whose identity is a remote name the *server* invents, and which are only
+/// interesting once one has actually pushed something.
 ///
-/// The remote address is a literal address in TEST-NET-3 rather than a hostname: Forgejo resolves
-/// the address before accepting the mirror and refuses anything on a local network, so a name that
-/// does not resolve is rejected with 401 and a hostname that does would make this test need DNS.
+/// Every call after the create is addressed by a name this process never chose, so nothing short
+/// of a live lifecycle proves the name in the create reply is the one the `GET`, sync and `DELETE`
+/// routes accept.
+///
+/// The mirror targets a second repository on this same instance, at [`Instance::internal_url`]:
+/// Forgejo is the one that opens the connection, so the address has to make sense inside the
+/// container. That is what turns `push_mirrors-sync` from an endpoint that answers into a claim
+/// worth making — the destination is checked to end up on the source's commit. Pointed anywhere
+/// unreachable the sync is a 500, which is a test of nothing.
 #[test]
-fn a_push_mirror_is_addressable_by_the_remote_name_the_server_assigned_it() {
+fn a_push_mirror_is_addressable_by_its_server_assigned_name_and_delivers_what_it_mirrors() {
     let inst = instance_or_skip!();
-    let repo = TestRepo::create_initialized(inst, "rc-mirror");
-    cover!(raw: ["repoAddPushMirror", "repoListPushMirrors", "repoGetPushMirrorByRemoteName", "repoDeletePushMirror"]);
+    let source = TestRepo::create_initialized(inst, "rc-mirror-src");
+    let destination = TestRepo::create(inst, "rc-mirror-dst");
+    cover!(raw: [
+        "repoAddPushMirror", "repoListPushMirrors", "repoGetPushMirrorByRemoteName",
+        "repoPushMirrorSync", "repoDeletePushMirror"
+    ]);
 
-    const TARGET: &str = "https://203.0.113.10/mirror/target.git";
+    let target = format!("{}/{}.git", inst.internal_url(), destination.slug());
     let created = inst.fjo([
         "raw",
         "repo",
         "add-push-mirror",
-        &repo.owner,
-        &repo.name,
+        &source.owner,
+        &source.name,
         "--remote-address",
-        TARGET,
+        &target,
+        "--remote-username",
+        &inst.user,
+        "--remote-password",
+        &inst.token,
         "--interval",
         "8h0m0s",
         "--sync-on-commit=true",
@@ -1424,7 +1432,7 @@ fn a_push_mirror_is_addressable_by_the_remote_name_the_server_assigned_it() {
     ]);
     created.assert_ok("fjo raw repo add-push-mirror");
     let created = created.json();
-    assert_eq!(created["remote_address"], serde_json::json!(TARGET), "{created}");
+    assert_eq!(created["remote_address"], serde_json::json!(target), "{created}");
     assert_eq!(created["sync_on_commit"], serde_json::json!(true), "{created}");
     let remote = created["remote_name"]
         .as_str()
@@ -1435,8 +1443,8 @@ fn a_push_mirror_is_addressable_by_the_remote_name_the_server_assigned_it() {
         "raw",
         "repo",
         "list-push-mirrors",
-        &repo.owner,
-        &repo.name,
+        &source.owner,
+        &source.name,
         "--json",
         "remote_name",
     ]);
@@ -1451,8 +1459,8 @@ fn a_push_mirror_is_addressable_by_the_remote_name_the_server_assigned_it() {
         "raw",
         "repo",
         "get-push-mirror-by-remote-name",
-        &repo.owner,
-        &repo.name,
+        &source.owner,
+        &source.name,
         &remote,
         "--json",
         "remote_address",
@@ -1460,21 +1468,164 @@ fn a_push_mirror_is_addressable_by_the_remote_name_the_server_assigned_it() {
     got.assert_ok("fjo raw repo get-push-mirror-by-remote-name");
     assert_eq!(
         got.json()["remote_address"],
-        serde_json::json!(TARGET),
+        serde_json::json!(target),
         "the server-assigned name addressed a different mirror"
     );
 
-    inst.fjo(["raw", "repo", "delete-push-mirror", &repo.owner, &repo.name, &remote])
+    inst.fjo(["raw", "repo", "push-mirror-sync", &source.owner, &source.name])
+        .assert_ok("fjo raw repo push-mirror-sync");
+
+    // The sync is queued, so the destination is polled rather than read once. The assertion is
+    // about the commit, not about the branch existing: a mirror that pushed an empty branch would
+    // satisfy the weaker check.
+    assert!(
+        wait_for_branch(inst, &destination.slug(), "main"),
+        "the push mirror never delivered a `main` branch to {}",
+        destination.slug()
+    );
+    assert_eq!(
+        branch_head(inst, &destination.slug(), "main"),
+        branch_head(inst, &source.slug(), "main"),
+        "the mirror's destination is not on the commit the source is on"
+    );
+
+    inst.fjo(["raw", "repo", "delete-push-mirror", &source.owner, &source.name, &remote])
         .assert_ok("fjo raw repo delete-push-mirror");
     let gone = inst.fjo([
         "raw",
         "repo",
         "get-push-mirror-by-remote-name",
-        &repo.owner,
-        &repo.name,
+        &source.owner,
+        &source.name,
         &remote,
     ]);
     assert!(!gone.ok(), "the mirror survived its delete:\n{}\n{}", gone.stdout, gone.stderr);
+}
+
+/// Poll for a branch that another process is expected to create, for the asynchronous half of a
+/// push mirror. Bounded rather than unbounded: a mirror that never delivers has to fail this test
+/// with a message, not hang the run.
+fn wait_for_branch(inst: &Instance, slug: &str, branch: &str) -> bool {
+    for _ in 0..30 {
+        if inst.api("GET", &format!("repos/{slug}/branches/{branch}"), None).0 == 200 {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    false
+}
+
+// -------------------------------------------------------------------- migration and mirrors
+
+/// Migrate into a pull mirror, sync it, and convert it back into an ordinary repository.
+///
+/// One lifecycle rather than three tests because the last two operations have no other fixture:
+/// `convert` and `mirror-sync` both need a repository that *is* a mirror, and the only thing that
+/// can produce one is a migration — `PATCH /repos/{owner}/{repo}` cannot turn an ordinary
+/// repository into one.
+///
+/// Two things here are structurally beyond a mock. The clone is done **by Forgejo**, so the source
+/// address has to make sense inside the container: [`Instance::internal_url`] rather than
+/// `base_url`, which is the published port on the host and gives a 422 with `Clone: exit status
+/// 128`. And "the migration worked" is a claim about content, not about a 201 — a migration that
+/// produced an empty repository at the right name would satisfy any assertion made on the reply.
+/// So the source is a repository with a real commit, and the mirror is checked to be on exactly
+/// that commit.
+#[test]
+fn migrating_produces_a_mirror_that_syncs_and_can_be_converted_into_an_ordinary_repository() {
+    let inst = instance_or_skip!();
+    let source = TestRepo::create_initialized(inst, "rc-migrate");
+    source.api("PATCH", "", Some(r#"{"private":false}"#));
+    cover!(raw: ["repoMigrate", "repoMirrorSync", "repoConvert"]);
+
+    // Forgejo does the cloning, so this is the address *it* can reach, not the one this process
+    // uses. With `base_url` the migration is a 422 naming a git exit status 128.
+    let clone_addr = format!("{}/{}.git", inst.internal_url(), source.slug());
+    let name = inst.unique_repo_name("rc-mirror");
+    let slug = format!("{}/{name}", inst.user);
+
+    let migrated = inst.fjo([
+        "raw",
+        "repo",
+        "migrate",
+        "--clone-addr",
+        &clone_addr,
+        "--repo-name",
+        &name,
+        "--mirror=true",
+        "--service",
+        "git",
+        "--auth-token",
+        &inst.token,
+        "--private=true",
+        "--json",
+        "full_name,mirror,empty",
+    ]);
+    migrated.assert_ok("fjo raw repo migrate");
+    let migrated = migrated.json();
+    assert_eq!(migrated["full_name"], serde_json::json!(slug), "{migrated}");
+    assert_eq!(
+        migrated["mirror"],
+        serde_json::json!(true),
+        "--mirror=true did not produce a mirror: {migrated}"
+    );
+
+    // The content, not the name. A migration that made an empty repository would pass every
+    // assertion above this line.
+    assert_eq!(
+        branch_head(inst, &slug, "main"),
+        branch_head(inst, &source.slug(), "main"),
+        "the mirror is not on the commit its source is on, so the clone brought nothing across"
+    );
+
+    inst.fjo(["raw", "repo", "mirror-sync", &inst.user, &name])
+        .assert_ok("fjo raw repo mirror-sync");
+
+    let converted = inst.fjo([
+        "raw",
+        "repo",
+        "convert",
+        &inst.user,
+        &name,
+        "--json",
+        "mirror,original_url,empty",
+    ]);
+    converted.assert_ok("fjo raw repo convert");
+    let converted = converted.json();
+    assert_eq!(
+        converted["mirror"],
+        serde_json::json!(false),
+        "convert left it a mirror: {converted}"
+    );
+    assert_eq!(
+        converted["original_url"],
+        serde_json::json!(clone_addr),
+        "a converted repository keeps a record of where it was migrated from: {converted}"
+    );
+
+    // Converting must not cost the content it was mirroring.
+    assert_eq!(
+        branch_head(inst, &slug, "main"),
+        branch_head(inst, &source.slug(), "main"),
+        "converting the mirror lost the history it had pulled"
+    );
+    let after = repo_json(inst, &slug);
+    assert_eq!(after["mirror"], serde_json::json!(false), "the mirror flag came back: {after}");
+
+    // And the operation is not idempotent: a repository that is no longer a mirror has nothing to
+    // sync and nothing to convert. Asserted by exit status rather than by message, so a reworded
+    // server error does not fail this.
+    for op in ["mirror-sync", "convert"] {
+        let again = inst.fjo(["raw", "repo", op, &inst.user, &name]);
+        assert!(
+            !again.ok(),
+            "`{op}` should refuse a repository that is not a mirror:\n{}\n{}",
+            again.stdout,
+            again.stderr
+        );
+    }
+
+    let _ = inst.api("DELETE", &format!("repos/{slug}"), None);
 }
 
 // ------------------------------------------------------------------------ repository flags

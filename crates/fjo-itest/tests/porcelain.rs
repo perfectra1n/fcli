@@ -8,7 +8,7 @@
 
 use std::path::PathBuf;
 
-use fjo_itest::{TestRepo, commit_and_push, instance_or_skip};
+use fjo_itest::{TestRepo, commit_and_push, cover, instance_or_skip};
 
 /// A scratch directory that cleans up after itself, for the tests that need a git checkout.
 struct Scratch(PathBuf);
@@ -36,6 +36,16 @@ impl Drop for Scratch {
 #[test]
 fn issue_create_resolves_label_and_milestone_names() {
     let inst = instance_or_skip!();
+    cover!(
+        porcelain: ["label create", "milestone create", "issue create"],
+        hits: [
+            "issueCreateLabel",
+            "issueCreateMilestone",
+            "issueListLabels",
+            "issueGetMilestonesList",
+            "issueCreateIssue",
+        ],
+    );
     let repo = TestRepo::create(inst, "issue-resolve");
 
     inst.fjo(["label", "create", "bug", "-c", "FF0000", "-R", &repo.slug()])
@@ -72,6 +82,7 @@ fn issue_create_resolves_label_and_milestone_names() {
 #[test]
 fn issue_create_rejects_an_unknown_label() {
     let inst = instance_or_skip!();
+    cover!(porcelain: ["issue create"], hits: ["issueListLabels"]);
     let repo = TestRepo::create(inst, "issue-badlabel");
 
     let run = inst.fjo([
@@ -103,6 +114,10 @@ fn issue_create_rejects_an_unknown_label() {
 #[test]
 fn release_create_uploads_assets_intact() {
     let inst = instance_or_skip!();
+    cover!(
+        porcelain: ["release create"],
+        hits: ["repoCreateRelease", "repoCreateReleaseAttachment"],
+    );
     let repo = TestRepo::create_initialized(inst, "release-assets");
     let scratch = Scratch::new("rel");
     std::fs::create_dir_all(scratch.path()).expect("scratch dir");
@@ -150,6 +165,7 @@ fn release_create_uploads_assets_intact() {
 #[test]
 fn repo_fork_with_an_explicit_name() {
     let inst = instance_or_skip!();
+    cover!(porcelain: ["repo fork"], hits: ["createFork"]);
     let repo = TestRepo::create_initialized(inst, "fork-src");
     // Public: a fork of a private repository is a different permission path.
     repo.api("PATCH", "", Some(r#"{"private":false}"#));
@@ -186,6 +202,7 @@ fn repo_fork_with_an_explicit_name() {
 #[test]
 fn repo_fork_without_a_name() {
     let inst = instance_or_skip!();
+    cover!(porcelain: ["repo fork"], hits: ["createFork"]);
     let repo = TestRepo::create_initialized(inst, "fork-plain");
     repo.api("PATCH", "", Some(r#"{"private":false}"#));
 
@@ -222,6 +239,7 @@ fn repo_fork_without_a_name() {
 #[test]
 fn pr_create_fill_reads_git() {
     let inst = instance_or_skip!();
+    cover!(porcelain: ["pr create"], hits: ["repoGet", "repoCreatePullRequest"]);
     let repo = TestRepo::create_initialized(inst, "pr-fill");
     let scratch = Scratch::new("prfill");
     repo.clone_to(scratch.path());
@@ -252,6 +270,7 @@ fn pr_create_fill_reads_git() {
 #[test]
 fn pr_merge_squash_and_delete_branch() {
     let inst = instance_or_skip!();
+    cover!(porcelain: ["pr merge"], hits: ["repoGetPullRequest", "repoMergePullRequest"]);
     let repo = TestRepo::create_initialized(inst, "pr-merge");
     let scratch = Scratch::new("prmerge");
     repo.clone_to(scratch.path());
@@ -295,6 +314,8 @@ fn pr_merge_squash_and_delete_branch() {
 #[test]
 fn issue_pin_refuses_position_zero_without_pinning_anything() {
     let inst = instance_or_skip!();
+    // No `hits:`: the whole point is that nothing was sent.
+    cover!(porcelain: ["issue pin"]);
     let repo = TestRepo::create(inst, "pin-validate");
     let (code, body) = repo.api("POST", "issues", Some(r#"{"title":"pin me"}"#));
     assert!((200..300).contains(&code), "seeding the issue failed: HTTP {code}: {body}");
@@ -332,6 +353,10 @@ fn notification_mark_read_marks_every_thread_it_listed() {
     const THREADS: usize = 18;
 
     let inst = instance_or_skip!();
+    cover!(
+        porcelain: ["notification list"],
+        hits: ["notifyGetRepoList", "notifyReadThread"],
+    );
     let Ok(reporter) = inst.scoped_user("notifier", &["all"]) else {
         panic!("could not mint a second account to fill the inbox with");
     };
@@ -415,6 +440,7 @@ fn notification_mark_read_marks_every_thread_it_listed() {
 #[test]
 fn workflow_list_reads_all_three_directories_and_keeps_bodies_with_their_paths() {
     let inst = instance_or_skip!();
+    cover!(porcelain: ["workflow list"], hits: ["repoGetContents", "repoGetRawFile"]);
     let repo = TestRepo::create_initialized(inst, "workflow-dirs");
 
     // Path -> the workflow's `name:`. Deliberately not in path order, and deliberately spanning
@@ -479,6 +505,7 @@ fn workflow_list_reads_all_three_directories_and_keeps_bodies_with_their_paths()
 #[test]
 fn workflow_list_tolerates_the_two_directories_that_are_not_there() {
     let inst = instance_or_skip!();
+    cover!(porcelain: ["workflow list"], hits: ["repoGetContents", "repoGetRawFile"]);
     let repo = TestRepo::create_initialized(inst, "workflow-onedir");
 
     let body = forgejo_core::http::base64::encode(
@@ -521,6 +548,7 @@ fn workflow_list_tolerates_the_two_directories_that_are_not_there() {
 #[test]
 fn label_list_include_org_survives_an_owner_that_is_not_an_organization() {
     let inst = instance_or_skip!();
+    cover!(porcelain: ["label list"], hits: ["issueListLabels", "orgListLabels"]);
     let repo = TestRepo::create(inst, "label-includeorg");
     for name in ["alpha", "beta", "gamma"] {
         let (code, body) =
@@ -566,6 +594,7 @@ fn label_list_include_org_survives_an_owner_that_is_not_an_organization() {
 #[test]
 fn issue_view_with_comments_prints_all_of_them_in_order() {
     let inst = instance_or_skip!();
+    cover!(porcelain: ["issue view"], hits: ["issueGetIssue", "issueGetComments"]);
     let repo = TestRepo::create(inst, "issue-viewcomments");
     let (code, body) = repo.api("POST", "issues", Some(r#"{"title":"talkative"}"#));
     assert!((200..300).contains(&code), "seeding the issue failed: HTTP {code}: {body}");
@@ -607,6 +636,10 @@ fn issue_view_with_comments_prints_all_of_them_in_order() {
 #[test]
 fn repo_view_prints_the_readme_it_fetched_concurrently() {
     let inst = instance_or_skip!();
+    cover!(
+        porcelain: ["repo view"],
+        hits: ["repoGet", "repoGetContentsList", "repoGetRawFile"],
+    );
     let repo = TestRepo::create_initialized(inst, "repo-viewreadme");
 
     let (code, body) = repo.api("GET", "contents/README.md", None);
@@ -647,6 +680,15 @@ fn repo_view_prints_the_readme_it_fetched_concurrently() {
 #[test]
 fn issue_depends_list_shows_both_directions() {
     let inst = instance_or_skip!();
+    cover!(
+        porcelain: ["issue depends add", "issue depends list"],
+        hits: [
+            "issueCreateIssueDependencies",
+            "issueCreateIssueBlocking",
+            "issueListIssueDependencies",
+            "issueListBlocks",
+        ],
+    );
     let repo = TestRepo::create(inst, "issue-depends");
     for title in ["the subject", "the blocker", "the blocked"] {
         let (code, body) = repo.api("POST", "issues", Some(&format!(r#"{{"title":"{title}"}}"#)));
@@ -690,6 +732,10 @@ fn issue_depends_list_shows_both_directions() {
 #[test]
 fn pr_machine_output_is_complete_without_the_calls_it_stopped_making() {
     let inst = instance_or_skip!();
+    cover!(
+        porcelain: ["pr view", "pr status"],
+        hits: ["repoGetPullRequest", "issueGetComments"],
+    );
     let repo = TestRepo::create_initialized(inst, "pr-machine");
     let scratch = Scratch::new("prmachine");
     repo.clone_to(scratch.path());
@@ -741,6 +787,10 @@ fn pr_machine_output_is_complete_without_the_calls_it_stopped_making() {
 #[test]
 fn block_list_rows_follow_the_api_listing_order() {
     let inst = instance_or_skip!();
+    cover!(
+        porcelain: ["block add", "block list", "block remove"],
+        hits: ["userBlockUser", "userUnblockUser", "userListBlockedUsers", "userSearch"],
+    );
     // Names unique to this process: blocking is an account-level act, not a repository one, so
     // there is no `TestRepo` to scope it to. The numeric part is scrambled so that alphabetical
     // order, id order and listing order are three different things — otherwise a reshuffle could
@@ -820,6 +870,10 @@ fn block_list_rows_follow_the_api_listing_order() {
 #[test]
 fn times_list_all_still_filters_by_the_login_it_resolved() {
     let inst = instance_or_skip!();
+    cover!(
+        porcelain: ["times list"],
+        hits: ["userGetCurrent", "userCurrentTrackedTimes"],
+    );
     let repo = TestRepo::create(inst, "times-all");
     let (code, body) = repo.api("POST", "issues", Some(r#"{"title":"timed"}"#));
     assert!((200..300).contains(&code), "seeding the issue failed: HTTP {code}: {body}");
@@ -858,6 +912,9 @@ fn times_list_all_still_filters_by_the_login_it_resolved() {
 #[test]
 fn a_broken_jq_expression_beats_the_request_it_would_have_filtered() {
     let inst = instance_or_skip!();
+    // Nothing is declared here. `fjo nodeinfo` is a *group* with one leaf (`nodeinfo limits`),
+    // so the bare form this drives is not in the porcelain inventory — and no operation was
+    // exercised either, since the whole assertion is that the request never went out.
 
     let run = inst.fjo(["nodeinfo", "--jq", ".bad["]);
     run.assert_code(2, "fjo nodeinfo --jq with a broken expression");
