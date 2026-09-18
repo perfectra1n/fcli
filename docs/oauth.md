@@ -106,15 +106,28 @@ when it next renews.
 and needs no browser. `fjo auth login --with-token < token.txt`, or `FJO_TOKEN` in the
 environment.
 
-## Known gaps
+## What is tested, and what is not
 
-* **The consent click is not covered by an automated test.** `/login/oauth/authorize` renders a
-  page that needs a session cookie and a click. Driving it would mean scraping CSRF tokens out of
-  Forgejo's login and grant forms, which is not a stable interface and would break CI on Forgejo
-  releases unrelated to fjo. `crates/fjo-itest/tests/live_oauth.rs` covers what can be measured
-  and records why the rest cannot, including the fact that an unauthenticated probe cannot see
-  redirect-URI validation at all — `reqSignIn` bounces every request to `/user/login` first.
-* **The redirect-URI rule rests on source reading.** See `ContainsRedirectURI` in Forgejo's
-  `models/auth/oauth2.go`. If a login ever fails with `redirect_uri_mismatch`, start there.
+`crates/fjo-itest/tests/live_oauth.rs` drives the whole flow against a real Forgejo, including
+the consent click. A stand-in browser signs in, posts the grant, and fetches the redirect, so
+fjo's own PKCE, loopback listener, state check, token exchange and storage all run for real; the
+stored session is then spent on live API calls to prove Forgejo accepts it as `Bearer`.
+
+This needs no HTML parsing, which is why it is worth having. Forgejo 16.0.4's sign-in form
+carries no CSRF token, and neither does the grant form — every field the grant form submits is a
+value that was already in the authorize URL. So there is no markup dependency to rot.
+
+The redirect-URI rule is pinned directly: with a session, an authorize request naming
+`http://127.0.0.1:<port>` answers `200` and one naming `http://127.0.0.1:<port>/callback` answers
+`400`. Checking it needs the session, because `reqSignIn` runs before the handler and bounces
+every unauthenticated request to `/user/login` whatever it asks for — a good redirect URI and a
+bad one look identical from outside.
+
+Still not covered:
+
+* **A real browser.** The stand-in does what a browser does over HTTP, but nothing exercises an
+  actual browser launch, and `open::with_detached` is taken on trust.
+* **Keyring storage.** The live tests use the file store, as the whole suite does; the keyring
+  path is covered only by unit tests.
 * **Logging out does not revoke the grant server-side.** `fjo auth logout` removes the local
   credential; the authorization remains listed under the account's settings until revoked there.
