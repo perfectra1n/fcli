@@ -34,6 +34,8 @@ keyring.workspace = true
 etcetera.workspace = true
 thiserror.workspace = true
 anstyle.workspace = true
+sha2.workspace = true
+getrandom.workspace = true
 
 [dev-dependencies]
 insta.workspace = true

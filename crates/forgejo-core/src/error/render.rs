@@ -267,6 +267,9 @@ pub fn headline(kind: &ErrorKind) -> String {
         },
         OauthTokenExchangeFailed { host, .. } => format!("{host} refused the OAuth code"),
         OauthRefreshFailed { host, .. } => format!("your OAuth session for {host} has expired"),
+        OauthEntropyUnavailable { .. } => {
+            "could not generate a secure random value for the login".to_owned()
+        }
 
         NotAGitRepo => "not in a Git checkout; specify a repository with -R".to_owned(),
         RepoNotResolved { .. } => "could not determine the repository".to_owned(),
@@ -847,6 +850,16 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
             .todo(Line::step(2, format!("fjo auth login --host {host}")))
             .todo(Line::note(
                 "a token created in the web UI never expires, which is what CI should use.",
+            )),
+
+        OauthEntropyUnavailable { cause } => a
+            .fact("cause", cause)
+            .todo(Line::text(
+                "a browser login needs unguessable values, and the OS random source refused.",
+            ))
+            .todo(Line::step(1, "fjo auth login --with-token"))
+            .todo(Line::note(
+                "this usually means a restricted sandbox or a seccomp filter blocking getrandom.",
             )),
 
         // Reproduces the worked example in the plan, because the wording is the design.
@@ -1533,6 +1546,7 @@ mod tests {
             OauthCallbackUnavailable { .. } => "OauthCallbackUnavailable",
             OauthTokenExchangeFailed { .. } => "OauthTokenExchangeFailed",
             OauthRefreshFailed { .. } => "OauthRefreshFailed",
+            OauthEntropyUnavailable { .. } => "OauthEntropyUnavailable",
             InsufficientScope { .. } => "InsufficientScope",
             TwoFactorRequired { .. } => "TwoFactorRequired",
             KeyringUnavailable { .. } => "KeyringUnavailable",
@@ -1663,6 +1677,7 @@ mod tests {
                 login: "perf3ct".into(),
                 reason: Some("invalid_grant".into()),
             },
+            OauthEntropyUnavailable { cause: "Operation not permitted (os error 1)".into() },
             InsufficientScope {
                 host: "git.example.org".into(),
                 needed: vec!["write:issue".into()],

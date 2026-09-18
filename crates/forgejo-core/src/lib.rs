@@ -11,6 +11,7 @@ pub mod config;
 pub mod context;
 pub mod error;
 pub mod http;
+pub mod oauth;
 pub mod types;
 
 pub use error::{Error, ErrorKind, Result};

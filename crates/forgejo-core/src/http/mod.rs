@@ -474,6 +474,11 @@ impl Client {
         &self.inner.host
     }
 
+    /// The account this client is acting as, when one is known.
+    pub fn login(&self) -> Option<&str> {
+        self.inner.login.as_deref()
+    }
+
     /// Where a user creates a token on this instance. Every auth error message points here.
     pub fn settings_url(&self) -> String {
         format!("{}/user/settings/applications", self.inner.web_base)
@@ -604,12 +609,42 @@ impl Client {
         url: &str,
         fields: Vec<(String, String)>,
     ) -> Result<T> {
-        let mut req = self.web_request(Method::POST, url)?;
-        req.accept = Accept::Json;
-        req.body = Body::Form(fields);
+        let req = self.web_form_request(url, fields)?;
         let resp = self.web_send(&req, url).await?;
         let bytes = resp.bytes().await?;
         self.decode(&req, &bytes)
+    }
+
+    /// The same form POST, **without** turning a non-2xx status into an `Err`.
+    ///
+    /// Stands to [`Client::web_form`] exactly as [`Client::raw`] stands to [`Client::json`], and
+    /// exists for the same reason: the caller needs the body of a failed response, not a
+    /// classification of it. OAuth2's error body is RFC 6749 §5.2's `{error,
+    /// error_description}`, which is not Forgejo's API error shape, so the OAuth layer reads it
+    /// itself rather than having it flattened into a generic message on the way past.
+    pub async fn web_form_raw(
+        &self,
+        url: &str,
+        fields: Vec<(String, String)>,
+    ) -> Result<RawResponse> {
+        let req = self.web_form_request(url, fields)?;
+        let resp = self.dispatch(&req, Some(url)).await.map_err(|mut e| {
+            e.ctx.path = Some(req.path.clone());
+            e
+        })?;
+        let (status, headers, body) = resp.into_parts();
+        let headers = headers
+            .iter()
+            .map(|(n, v)| (n.as_str().to_owned(), v.to_str().unwrap_or("<non-utf8>").to_owned()))
+            .collect();
+        Ok(RawResponse { status: status.as_u16(), headers, body: collect(body).await? })
+    }
+
+    fn web_form_request(&self, url: &str, fields: Vec<(String, String)>) -> Result<Request> {
+        let mut req = self.web_request(Method::POST, url)?;
+        req.accept = Accept::Json;
+        req.body = Body::Form(fields);
+        Ok(req)
     }
 
     /// Send a request whose URL is on the web root, correcting the path reported on failure.

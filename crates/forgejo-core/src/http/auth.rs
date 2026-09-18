@@ -68,7 +68,7 @@ pub enum Auth {
     /// An OAuth2 access token (a JWT). Sent as `Authorization: Bearer <t>`.
     ///
     /// Short-lived — Forgejo issues these with `expires_in: 3600` — so a client holding one is
-    /// expected to refresh it.
+    /// expected to refresh it. See [`crate::oauth`].
     Bearer(SecretString),
     /// HTTP Basic. Forgejo accepts it, and it is the only way to use a password + TOTP to
     /// *create* a token in the first place, which `fjo auth login` needs.

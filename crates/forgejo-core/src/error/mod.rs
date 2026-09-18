@@ -344,6 +344,12 @@ pub enum ErrorKind {
         error: String,
         description: Option<String>,
     },
+    /// The operating system's random source refused. Effectively impossible on a working
+    /// system, but a login cannot proceed without unguessable values, and silently continuing
+    /// with predictable ones would defeat both PKCE and the state check.
+    OauthEntropyUnavailable {
+        cause: String,
+    },
     /// The refresh token is spent or expired. Forgejo's default refresh lifetime is 730 hours,
     /// so this is what a month-old session looks like.
     OauthRefreshFailed {
@@ -678,7 +684,8 @@ impl ErrorKind {
             | OauthStateMismatch { .. }
             | OauthCallbackUnavailable { .. }
             | OauthTokenExchangeFailed { .. }
-            | OauthRefreshFailed { .. } => 4,
+            | OauthRefreshFailed { .. }
+            | OauthEntropyUnavailable { .. } => 4,
 
             RepoNotFound { .. } | ResourceNotFound { .. } | RouteNotFound { .. } => 5,
 
