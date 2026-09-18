@@ -58,7 +58,12 @@ Scopes are fixed when a token is created; create a new token to change them.
 
 `fjo auth status` never prints tokens. Use `fjo auth token` to retrieve one.
 
+--web logs in through the browser instead. OAuth sessions renew themselves and
+lapse after about 30 days; scopes do not apply to them, because Forgejo does not
+enforce scopes on an OAuth token. For CI, prefer a token, which does not expire.
+
   fjo auth login --host codeberg.org             # prompts for a token
+  fjo auth login --host codeberg.org --web       # logs in through your browser
   fjo auth login --host git.example.org --with-token < token.txt
   fjo auth status                                # per host: who you are, and whether it works
   fjo auth switch --host git.example.org         # change the active host or login
