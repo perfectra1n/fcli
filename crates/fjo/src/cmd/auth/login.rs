@@ -101,8 +101,14 @@ pub fn run(globals: &GlobalOpts, args: &Args) -> Result<()> {
         }
 
         let mut creds = setup.credentials(Some(&key)).insecure_storage(args.insecure_storage);
-        let source =
-            creds.store(&mut setup.hosts, &key, &me.login, &token.as_str().into(), scopes)?;
+        let source = creds.store(
+            &mut setup.hosts,
+            &key,
+            &me.login,
+            &token.as_str().into(),
+            scopes,
+            Some("pat"),
+        )?;
 
         setup.hosts.set_active(&key)?;
         setup.hosts.select_login(&key, &me.login)?;

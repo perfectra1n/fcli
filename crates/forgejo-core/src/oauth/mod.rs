@@ -45,10 +45,12 @@
 mod discovery;
 mod flow;
 mod pkce;
+mod stored;
 
 pub use discovery::Endpoints;
 pub use flow::{AuthorizeParams, TokenResponse, authorize_url, exchange_code, refresh};
 pub use pkce::{Pkce, random_state};
+pub use stored::{StoredOauth, kind_of};
 
 /// Forgejo's built-in OAuth2 application for `git-credential-oauth`.
 ///

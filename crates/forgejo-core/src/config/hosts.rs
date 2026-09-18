@@ -203,11 +203,24 @@ pub struct Login {
     /// `unknown`. It is advisory: a token created outside `fjo` has no record here.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scopes: Vec<Scope>,
+    /// Which kind of credential is filed for this login: `"pat"` or `"oauth2"`.
+    ///
+    /// **Advisory, and never load-bearing.** The credential store is the single source of truth;
+    /// whatever reads a credential parses it and decides. This exists so `auth status` can say
+    /// "OAuth session" while the keyring is locked, and so someone reading this file can see why
+    /// a login has no token line.
+    ///
+    /// Nothing may depend on it, because an older `fjo` will silently drop it. `Login` is a
+    /// typed struct with no catch-all, unlike `Config`, which keeps a `toml::Table` precisely so
+    /// unknown keys survive a round trip — so any field added here is lost the next time an
+    /// older build saves the file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
 }
 
 impl Login {
     pub fn new(user: impl Into<String>) -> Self {
-        Self { user: user.into(), token: None, scopes: Vec::new() }
+        Self { user: user.into(), token: None, scopes: Vec::new(), kind: None }
     }
 }
 
@@ -220,6 +233,7 @@ impl std::fmt::Debug for Login {
             .field("user", &self.user)
             .field("token", &self.token.as_ref().map(|_| "<redacted>"))
             .field("scopes", &self.scopes)
+            .field("kind", &self.kind)
             .finish()
     }
 }
@@ -531,6 +545,7 @@ impl Hosts {
         user: &str,
         token: Option<SecretString>,
         scopes: Vec<Scope>,
+        kind: Option<&str>,
     ) -> Result<()> {
         let known = self.known();
         let Some(host) = self.data.hosts.iter_mut().find(|h| &h.name == key) else {
@@ -544,9 +559,17 @@ impl Hosts {
                 if !scopes.is_empty() {
                     l.scopes = scopes;
                 }
+                if kind.is_some() {
+                    l.kind = kind.map(str::to_owned);
+                }
             }
             None => {
-                host.logins.push(Login { user: user.to_owned(), token, scopes });
+                host.logins.push(Login {
+                    user: user.to_owned(),
+                    token,
+                    scopes,
+                    kind: kind.map(str::to_owned),
+                });
                 host.logins.sort_by(|a, b| a.user.cmp(&b.user));
             }
         }
@@ -856,8 +879,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut h = Hosts::empty_at(&dir.path().join(HOSTS_FILE));
         let key = h.add_host("https://git.example.org").unwrap().name.clone();
-        h.add_login(&key, "perf3ct", None, vec![]).unwrap();
-        h.add_login(&key, "ci-bot", None, vec![]).unwrap();
+        h.add_login(&key, "perf3ct", None, vec![], None).unwrap();
+        h.add_login(&key, "ci-bot", None, vec![], None).unwrap();
 
         assert_eq!(h.get(&key).unwrap().logins.len(), 2);
         // The first login added became active.
@@ -875,8 +898,8 @@ mod tests {
         let path = dir.path().join(HOSTS_FILE);
         let mut h = Hosts::empty_at(&path);
         let key = h.add_host("localhost:3000").unwrap().name.clone();
-        h.add_login(&key, "b", None, vec!["read:repository".into()]).unwrap();
-        h.add_login(&key, "a", None, vec![]).unwrap();
+        h.add_login(&key, "b", None, vec!["read:repository".into()], None).unwrap();
+        h.add_login(&key, "a", None, vec![], None).unwrap();
         h.select_login(&key, "a").unwrap();
         h.set_cached_store(&key, CredentialStore::File);
         h.save().unwrap();
@@ -1055,7 +1078,8 @@ mod tests {
 
     #[test]
     fn login_debug_never_prints_the_token() {
-        let l = Login { user: "u".into(), token: Some("s3cr3t".into()), scopes: vec![] };
+        let l =
+            Login { user: "u".into(), token: Some("s3cr3t".into()), scopes: vec![], kind: None };
         let s = format!("{l:?}");
         assert!(!s.contains("s3cr3t"), "{s}");
         assert!(s.contains("redacted"), "{s}");
