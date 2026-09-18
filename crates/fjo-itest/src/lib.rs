@@ -38,7 +38,7 @@ use testcontainers::runners::SyncRunner;
 use testcontainers::{Container, GenericImage, ImageExt};
 
 /// The Forgejo release these tests — and the vendored specification — target.
-pub const FORGEJO_IMAGE: &str = "codeberg.org/forgejo/forgejo:16.0.4";
+pub const FORGEJO_IMAGE: &str = "codeberg.org/forgejo/forgejo:16.0.5";
 
 /// How long to wait for Forgejo to answer before giving up and explaining why.
 ///
