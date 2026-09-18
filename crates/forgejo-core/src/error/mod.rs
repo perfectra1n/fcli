@@ -90,6 +90,23 @@ pub struct RequestCtx {
     /// Where the credential came from. Lets a 401 message say *which* token was rejected,
     /// which is the difference between an actionable error and a confusing one.
     pub token_source: Option<TokenSource>,
+    /// What kind of credential it was. Decides whether a 401 advises creating a new token or
+    /// logging in again.
+    pub credential_kind: Option<CredentialKind>,
+}
+
+/// What kind of credential was presented, as distinct from [`TokenSource`]'s *where it came
+/// from*.
+///
+/// Both are needed to explain a 401. "The token in your keyring was rejected" and "your OAuth
+/// session expired" are the same status code from the same place, with different remedies: one
+/// asks you to make a new token, the other to log in again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CredentialKind {
+    /// A personal access token. Opaque, and does not expire.
+    Pat,
+    /// An OAuth2 access token. A JWT, and expires within the hour.
+    Oauth2,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,6 +115,16 @@ pub enum TokenSource {
     File { path: PathBuf },
     Env { var: String },
     Flag,
+}
+
+/// Why the OAuth redirect never arrived. Two shapes, one variant, because the facts differ
+/// but the remedy converges on the same two commands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CallbackFailure {
+    /// The loopback socket could not be bound at all.
+    Bind(String),
+    /// Bound fine, but nothing came back within this many seconds.
+    Timeout(u64),
 }
 
 /// Which phase of a request timed out. Distinguishing these matters: a connect timeout is
@@ -285,6 +312,44 @@ pub enum ErrorKind {
     CredFilePermissions {
         path: PathBuf,
         mode: u32,
+    },
+
+    // ------------------------------------------------------------------- OAuth2
+    /// The instance answers nothing at the OAuth2 endpoints. Usually an older Forgejo, or an
+    /// administrator who emptied `[oauth2] DEFAULT_APPLICATIONS`.
+    OauthNotSupported {
+        host: String,
+        tried: Vec<String>,
+    },
+    /// The browser came back with `error=`, most often `access_denied` — the Authorize button
+    /// was not clicked.
+    OauthAuthorizationDenied {
+        host: String,
+        error: String,
+        description: Option<String>,
+    },
+    /// The `state` on the callback did not match the one we sent. No code was exchanged.
+    OauthStateMismatch {
+        host: String,
+    },
+    /// The loopback listener could not be bound, or nothing arrived before the deadline.
+    OauthCallbackUnavailable {
+        host: String,
+        port: Option<u16>,
+        reason: CallbackFailure,
+    },
+    /// The token endpoint refused the authorization code.
+    OauthTokenExchangeFailed {
+        host: String,
+        error: String,
+        description: Option<String>,
+    },
+    /// The refresh token is spent or expired. Forgejo's default refresh lifetime is 730 hours,
+    /// so this is what a month-old session looks like.
+    OauthRefreshFailed {
+        host: String,
+        login: String,
+        reason: Option<String>,
     },
 
     // -------------------------------------------------------- context resolution
@@ -607,7 +672,13 @@ impl ErrorKind {
             | InsufficientScope { .. }
             | TwoFactorRequired { .. }
             | NoHostConfigured
-            | UnknownHost { .. } => 4,
+            | UnknownHost { .. }
+            | OauthNotSupported { .. }
+            | OauthAuthorizationDenied { .. }
+            | OauthStateMismatch { .. }
+            | OauthCallbackUnavailable { .. }
+            | OauthTokenExchangeFailed { .. }
+            | OauthRefreshFailed { .. } => 4,
 
             RepoNotFound { .. } | ResourceNotFound { .. } | RouteNotFound { .. } => 5,
 

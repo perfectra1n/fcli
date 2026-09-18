@@ -46,7 +46,7 @@ use serde::de::DeserializeOwned;
 
 use crate::capabilities::{self, Capabilities};
 use crate::error::classify::{self, ClassifyCtx, RepoProbe};
-use crate::error::{Error, ErrorKind, RequestCtx, Result, TokenSource};
+use crate::error::{CredentialKind, Error, ErrorKind, RequestCtx, Result, TokenSource};
 
 /// The HTTP method type, re-exported.
 ///
@@ -930,6 +930,13 @@ impl Client {
             path: Some(path),
             status,
             token_source: self.inner.token_source.clone(),
+            credential_kind: match self.inner.creds.auth {
+                Auth::Token(_) => Some(CredentialKind::Pat),
+                Auth::Bearer(_) => Some(CredentialKind::Oauth2),
+                // Basic auth and no-credential are neither, and saying "personal access token"
+                // about them would put a wrong remedy in a 401.
+                Auth::None | Auth::Basic { .. } => None,
+            },
         }
     }
 
