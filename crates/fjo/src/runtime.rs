@@ -308,6 +308,26 @@ pub fn block_on<F: std::future::Future<Output = Result<()>>>(f: F) -> Result<()>
     out
 }
 
+/// Run one async body that yields a value rather than a `Result<()>`.
+///
+/// For a step that is part of a longer, mostly synchronous command — `auth login --web` has to
+/// find the OAuth endpoints before it can build a URL, then block on a socket, then talk to the
+/// server again. Splitting those into separate runtimes is correct and cheap: they run in
+/// sequence, never nested, and a current-thread runtime costs microseconds to build.
+pub fn block_on_value<T, F: std::future::Future<Output = T>>(f: F) -> T {
+    match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+        Ok(rt) => {
+            let out = rt.block_on(f);
+            rt.shutdown_timeout(Duration::from_millis(50));
+            out
+        }
+        // Only reachable if the OS refuses a thread or an epoll fd, at which point nothing else
+        // in this process is going to work either. The caller gets the future's fallback rather
+        // than a panic, because the panic budget is a budget.
+        Err(_) => futures::executor::block_on(f),
+    }
+}
+
 /// Colour policy for diagnostics, re-exported so command modules do not each reach for it.
 pub fn diagnostic_color() -> render::Color {
     exit::color()

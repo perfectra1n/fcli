@@ -13,6 +13,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use assert_cmd::Command;
+use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 
 /// A token that is easy to grep for and obviously not real.
@@ -302,6 +303,49 @@ fn a_login_with_no_token_and_no_terminal_names_with_token() {
         .assert()
         .code(2)
         .stderr(contains("--with-token"));
+}
+
+/// The never-hang guarantee, and it is only observable as a process.
+///
+/// Bug this prevents: `--web` blocking forever on a loopback socket nothing will ever connect
+/// to. On a build server, in a container, or over an SSH session with no browser, the redirect
+/// cannot arrive, and a wait with no deadline is indistinguishable from a crash. The deadline is
+/// what turns that into an error that names the way out.
+///
+/// The URL goes to stderr before any of that, because it is the one thing that unblocks a user
+/// in every failure mode this command has.
+#[test]
+fn a_web_login_without_a_browser_prints_the_url_and_does_not_hang() {
+    let dir = tmp();
+    cmd(dir.path())
+        .args(["auth", "login", "--host", "localhost:1", "--web", "--timeout", "1"])
+        .assert()
+        .code(4)
+        .stderr(contains("/login/oauth/authorize").and(contains("code_challenge_method=S256")));
+}
+
+/// `--no-browser` hands the reply back by hand, which needs somewhere to type. Without a
+/// terminal it must say so rather than wait for input that cannot come.
+#[test]
+fn a_web_login_with_no_browser_and_no_terminal_says_so() {
+    let dir = tmp();
+    cmd(dir.path())
+        .args(["auth", "login", "--host", "localhost:1", "--web", "--no-browser"])
+        .assert()
+        .code(2)
+        .stderr(contains("--no-browser"));
+}
+
+/// The two ways of logging in are alternatives, not a combination, and clap should say so
+/// before anything touches the network.
+#[test]
+fn a_web_login_conflicts_with_a_token_login() {
+    let dir = tmp();
+    cmd(dir.path())
+        .args(["auth", "login", "--host", "localhost:1", "--web", "--with-token"])
+        .assert()
+        .code(2)
+        .stderr(contains("--web").and(contains("--with-token")));
 }
 
 /// `--host` is required when there is no terminal to ask on, and the message has to say so.

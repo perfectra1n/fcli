@@ -28,6 +28,7 @@ mod setup_git;
 mod status;
 mod switch;
 mod token;
+mod web_login;
 
 use clap::{Args as ClapArgs, Subcommand};
 use forgejo_core::Result;
