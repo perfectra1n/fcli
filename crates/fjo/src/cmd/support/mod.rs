@@ -151,15 +151,29 @@ pub async fn me(api: &forgejo_client::Api) -> forgejo_core::error::Result<String
 /// browser exits — which for a `firefox` that was not already running is the difference between
 /// a prompt coming back and a hung terminal.
 pub fn open_web(rt: &crate::runtime::Runtime, url: &str) -> forgejo_core::error::Result<()> {
-    if !rt.term().tty {
+    let browser =
+        rt.config().resolved_browser(Some(rt.host().as_str()), &forgejo_core::config::SystemEnv);
+    open_url(rt.term(), browser, url)
+}
+
+/// [`open_web`] without a [`crate::runtime::Runtime`].
+///
+/// `auth login` needs exactly this and cannot have the other: `Runtime::new` fails with "no
+/// Forgejo host is set up yet", which is the very state `auth login` exists to leave. Rather
+/// than let that command reach for `open::` directly and quietly lose the `browser` preference
+/// and the non-TTY behaviour, both callers share this.
+pub fn open_url(
+    term: &Term,
+    browser: Option<String>,
+    url: &str,
+) -> forgejo_core::error::Result<()> {
+    if !term.tty {
         // The URL is the answer when nobody is watching a browser: `fjo pr view --web | cat`
         // should still tell you where it would have gone.
         println!("{url}");
         return Ok(());
     }
     eprintln!("Opening {url} in your browser.");
-    let browser =
-        rt.config().resolved_browser(Some(rt.host().as_str()), &forgejo_core::config::SystemEnv);
     let result = match browser {
         Some(b) => open::with_detached(url, b),
         None => open::that_detached(url),
