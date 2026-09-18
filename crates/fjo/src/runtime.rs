@@ -22,9 +22,11 @@ use forgejo_core::config::{ColorPref, Config, Env, HostKey, Hosts, SystemEnv};
 use forgejo_core::context::{GitCli, GitCtx, RepoContext, ResolveOptions, resolve_repo};
 use forgejo_core::error::{Error, ErrorKind, Result, TokenSource, render};
 use forgejo_core::http::{Auth, Client, Credentials as HttpCredentials, RetryPolicy, WaitNotice};
+use forgejo_core::oauth::StoredOauth;
 
 use crate::exit;
 use crate::global::GlobalOpts;
+use crate::oauth_refresh;
 use crate::output::Term;
 
 /// The process environment, as a `'static` so [`Credentials`] and [`resolve_repo`] can both
@@ -112,8 +114,46 @@ impl Runtime {
             warnings.push(*e.kind);
         }
 
+        // A personal access token parses as `None` here and nothing below runs: one byte
+        // comparison, no I/O, on the overwhelmingly common path.
         let (auth, token_source) = match &token {
-            Some(t) => (Auth::token(t.expose()), Some(t.source().clone())),
+            Some(t) => {
+                let source = Some(t.source().clone());
+                match StoredOauth::parse(t.expose()) {
+                    Some(stored) => {
+                        let entry_url = hosts.get(&host).map(|e| e.url.clone());
+                        let fresh = match (&login, &entry_url) {
+                            (Some(l), Some(url))
+                                if stored.can_refresh()
+                                    && stored.is_expiring(
+                                        oauth_refresh::SKEW,
+                                        jiff::Timestamp::now(),
+                                    ) =>
+                            {
+                                match oauth_refresh::refresh_blocking(
+                                    &stored, &mut hosts, &host, l, &mut creds, url,
+                                ) {
+                                    Ok(fresh) => Some(fresh),
+                                    // Not fatal. The command proceeds with whatever life the
+                                    // old token has left, and if it has none the server's own
+                                    // 401 arrives with full request context — a better message
+                                    // than anything that could be produced here, where no
+                                    // request has been made yet. Failing outright would also
+                                    // break commands that need no credential at all.
+                                    Err(e) => {
+                                        warnings.push(*e.kind);
+                                        None
+                                    }
+                                }
+                            }
+                            _ => None,
+                        };
+                        let session = fresh.unwrap_or(stored);
+                        (Auth::Bearer(session.access_token.clone()), source)
+                    }
+                    None => (Auth::token(t.expose()), source),
+                }
+            }
             None => (Auth::None, None),
         };
         let mut http_creds = HttpCredentials::new(auth);
