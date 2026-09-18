@@ -15,23 +15,51 @@
 //! client needs a codec to use them at all. Keeping it private forced `fjo` to hand-roll a
 //! second copy under `cmd/wiki/b64.rs`, with a module comment saying so.
 //!
-//! Only the standard alphabet is implemented. Forgejo does not use the URL-safe one anywhere in
-//! the spec, and offering an alphabet nobody needs is a way to pick the wrong one.
+//! Both RFC 4648 alphabets are implemented, and the reason is worth recording because this
+//! comment used to say the opposite. The standard alphabet (§4) is what the *spec* carries, and
+//! that remained true. The URL-safe alphabet (§5) is required by PKCE — RFC 7636 §4.2 fixes the
+//! `code_challenge` as unpadded base64url of a SHA-256 digest — and PKCE lives on Forgejo's
+//! OAuth2 endpoints, which are under the web root and so never appear in the spec at all. The
+//! old reasoning was sound about the thing it was looking at; the OAuth flow is outside it.
 
 /// RFC 4648 §4 standard alphabet.
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
+/// RFC 4648 §5 URL-safe alphabet. Identical but for the last two characters, `-_` in place of
+/// `+/`, so that a value survives being put in a query string without percent-encoding.
+const URL_ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
 /// Encode bytes as standard, padded base64.
 pub fn encode(input: impl AsRef<[u8]>) -> String {
-    let bytes = input.as_ref();
+    encode_with(input.as_ref(), ALPHABET, Pad::Yes)
+}
+
+/// Encode bytes as URL-safe base64 with **no** `=` padding, per RFC 4648 §5.
+///
+/// This is the shape PKCE wants. RFC 7636 §4.2 defines the `code_challenge` as
+/// `BASE64URL-ENCODE(SHA256(ASCII(code_verifier)))`, and §3 notes that the encoding there omits
+/// padding. Sending the padded form is the classic PKCE bug: `=` percent-encodes to `%3D` in a
+/// query string, the server compares the literal strings, and every exchange fails the challenge
+/// with an error that says nothing about padding.
+pub fn encode_url_nopad(input: impl AsRef<[u8]>) -> String {
+    encode_with(input.as_ref(), URL_ALPHABET, Pad::No)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pad {
+    Yes,
+    No,
+}
+
+fn encode_with(bytes: &[u8], alphabet: &[u8; 64], pad: Pad) -> String {
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
         let n = u32::from(b[0]) << 16 | u32::from(b[1]) << 8 | u32::from(b[2]);
         for i in 0..4 {
             if i <= chunk.len() {
-                out.push(ALPHABET[(n >> (18 - 6 * i) & 0x3f) as usize] as char);
-            } else {
+                out.push(alphabet[(n >> (18 - 6 * i) & 0x3f) as usize] as char);
+            } else if pad == Pad::Yes {
                 out.push('=');
             }
         }
@@ -120,6 +148,20 @@ mod tests {
             assert_eq!(encode(plain), encoded, "encoding {plain:?}");
             assert_eq!(decode(encoded).as_deref(), Some(plain.as_bytes()), "decoding {encoded:?}");
         }
+    }
+
+    /// RFC 4648 §10 again, through the URL-safe alphabet and with padding suppressed. The two
+    /// differences from the standard vectors above are the entire point of the function.
+    #[test]
+    fn url_safe_base64_drops_padding_and_uses_minus_and_underscore() {
+        for (plain, encoded) in
+            [("", ""), ("f", "Zg"), ("fo", "Zm8"), ("foo", "Zm9v"), ("foob", "Zm9vYg")]
+        {
+            assert_eq!(encode_url_nopad(plain), encoded, "encoding {plain:?}");
+        }
+        // 0xfb 0xff exercises both substituted characters: standard base64 gives `+/8=`.
+        assert_eq!(encode([0xfb, 0xff]), "+/8=");
+        assert_eq!(encode_url_nopad([0xfb, 0xff]), "-_8");
     }
 
     #[test]
