@@ -19,6 +19,7 @@
 //!   issues and screenshots. `auth token` exists for scripting and warns when it is about to
 //!   write a secret into a terminal's scrollback.
 
+pub mod callback;
 pub mod common;
 mod git_credential;
 mod login;
