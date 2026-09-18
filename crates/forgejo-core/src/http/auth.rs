@@ -8,6 +8,11 @@
 //! Forgejo declares five security schemes; all five are represented here:
 //! `AuthorizationHeaderToken`, `BasicAuth`, `SudoHeader` (`Sudo`), `SudoParam` (`?sudo=`), and
 //! `TOTPHeader` (`X-FORGEJO-OTP`).
+//!
+//! [`Auth::Bearer`] is a sixth that the spec does not declare, because Forgejo's OAuth2
+//! endpoints live under the web root rather than `/api/v1` and so never appear in the Swagger
+//! document. It is no less real: an OAuth2 access token authenticates the same `/api/v1`
+//! routes, it just wears a different scheme.
 
 use std::fmt;
 
@@ -29,6 +34,19 @@ use crate::http::base64;
 /// someone can "clean up".
 pub const TOKEN_PREFIX: &str = "token ";
 
+/// The `Authorization` scheme prefix for an OAuth2 access token.
+///
+/// Not interchangeable with [`TOKEN_PREFIX`], and the distinction is the entire reason there
+/// are two constants. A Forgejo personal access token is an opaque hex string and travels as
+/// `token <hex>`; an OAuth2 access token is a JWT and travels as `Bearer <jwt>`.
+///
+/// Forgejo's header parser happens to accept either prefix, trying a JWT parse first and
+/// falling back to a token lookup — so sending the wrong one mostly works. "Mostly" is exactly
+/// how a bug survives to production: it is an accident of the current implementation, not a
+/// documented guarantee, and the day it stops holding the failure is the same silent `401`
+/// described above. Send the scheme the credential actually is.
+pub const BEARER_PREFIX: &str = "Bearer ";
+
 /// The TOTP header. Forgejo kept Gitea's `X-GITEA-OTP` as an accepted alias, but sends and
 /// documents the Forgejo-branded name, so that is what we send.
 pub const OTP_HEADER: &str = "x-forgejo-otp";
@@ -47,6 +65,11 @@ pub enum Auth {
     None,
     /// A Forgejo API token. Sent as `Authorization: token <t>`.
     Token(SecretString),
+    /// An OAuth2 access token (a JWT). Sent as `Authorization: Bearer <t>`.
+    ///
+    /// Short-lived — Forgejo issues these with `expires_in: 3600` — so a client holding one is
+    /// expected to refresh it.
+    Bearer(SecretString),
     /// HTTP Basic. Forgejo accepts it, and it is the only way to use a password + TOTP to
     /// *create* a token in the first place, which `fjo auth login` needs.
     Basic { user: String, pass: SecretString },
@@ -55,6 +78,10 @@ pub enum Auth {
 impl Auth {
     pub fn token(t: impl Into<String>) -> Self {
         Auth::Token(SecretString::from(t.into()))
+    }
+
+    pub fn bearer(t: impl Into<String>) -> Self {
+        Auth::Bearer(SecretString::from(t.into()))
     }
 
     pub fn basic(user: impl Into<String>, pass: impl Into<String>) -> Self {
@@ -77,7 +104,7 @@ impl Auth {
     pub fn secret(&self) -> Option<&str> {
         match self {
             Auth::None => None,
-            Auth::Token(t) => Some(t.expose_secret()),
+            Auth::Token(t) | Auth::Bearer(t) => Some(t.expose_secret()),
             Auth::Basic { pass, .. } => Some(pass.expose_secret()),
         }
     }
@@ -92,6 +119,7 @@ impl fmt::Debug for Auth {
         match self {
             Auth::None => f.write_str("None"),
             Auth::Token(_) => f.write_str("Token(<redacted>)"),
+            Auth::Bearer(_) => f.write_str("Bearer(<redacted>)"),
             Auth::Basic { user, .. } => {
                 f.debug_struct("Basic").field("user", user).field("pass", &"<redacted>").finish()
             }
@@ -178,6 +206,11 @@ impl Credentials {
                 let v = format!("{TOKEN_PREFIX}{}", t.expose_secret());
                 headers.insert(http::header::AUTHORIZATION, sensitive(&v, "token")?);
             }
+            Auth::Bearer(t) => {
+                // See BEARER_PREFIX: an OAuth2 access token is not a personal access token.
+                let v = format!("{BEARER_PREFIX}{}", t.expose_secret());
+                headers.insert(http::header::AUTHORIZATION, sensitive(&v, "access token")?);
+            }
             Auth::Basic { user, pass } => {
                 let encoded = base64::encode(format!("{user}:{}", pass.expose_secret()));
                 let v = format!("Basic {encoded}");
@@ -245,6 +278,19 @@ mod tests {
         assert!(!v.starts_with("Bearer"), "Forgejo does not accept Bearer");
     }
 
+    /// The other half of the same bug, and the reason the assertion above says "Forgejo does
+    /// not accept Bearer" without that being the whole truth. It is true of the *personal
+    /// access token* that test covers. An OAuth2 access token is a JWT and wants `Bearer`;
+    /// sending `token <jwt>` happens to work against today's Forgejo, which is precisely the
+    /// kind of accident that stops working without warning.
+    #[test]
+    fn an_oauth_access_token_uses_the_bearer_scheme() {
+        let (h, _) = applied(&Credentials::new(Auth::bearer("eyJhbGciOiJIUzUxMiJ9.e30.sig")));
+        let v = h.get(http::header::AUTHORIZATION).unwrap().to_str().unwrap();
+        assert_eq!(v, "Bearer eyJhbGciOiJIUzUxMiJ9.e30.sig");
+        assert!(!v.starts_with(TOKEN_PREFIX), "an OAuth2 access token is not a PAT");
+    }
+
     #[test]
     fn basic_auth_is_base64_of_user_colon_pass() {
         let (h, _) = applied(&Credentials::new(Auth::basic("alice", "hunter2")));
@@ -289,6 +335,11 @@ mod tests {
         let a = Auth::token("supersecret-token-value");
         let d = format!("{a:?}");
         assert_eq!(d, "Token(<redacted>)");
+        assert!(!d.contains("supersecret"));
+
+        let a = Auth::bearer("supersecret-access-token");
+        let d = format!("{a:?}");
+        assert_eq!(d, "Bearer(<redacted>)");
         assert!(!d.contains("supersecret"));
 
         let c = Credentials::new(Auth::basic("alice", "supersecret")).with_otp("123456");
