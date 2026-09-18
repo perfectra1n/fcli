@@ -31,7 +31,22 @@ pub const SENSITIVE_HEADERS: &[&str] = &[
 ];
 
 /// Query parameter names whose values must never be printed.
-pub const SENSITIVE_QUERY: &[&str] = &["token", "access_token", "private_token"];
+///
+/// The last four are the OAuth2 flow's. `code` is the non-obvious one and the reason this list
+/// is not just "things called token": an authorization code is single-use, but until it is spent
+/// it is a bearer credential that anyone can exchange for a real token, and `--debug` prints the
+/// URL of the very request that spends it. `client_secret` is here defensively — fjo is a public
+/// client and never sends one — because a user pointing `--client-id` at a confidential
+/// application would otherwise put it in a pasted log.
+pub const SENSITIVE_QUERY: &[&str] = &[
+    "token",
+    "access_token",
+    "private_token",
+    "code",
+    "refresh_token",
+    "client_secret",
+    "code_verifier",
+];
 
 pub fn is_sensitive_header(name: &str) -> bool {
     SENSITIVE_HEADERS.iter().any(|h| h.eq_ignore_ascii_case(name))
