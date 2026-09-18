@@ -17,10 +17,11 @@
 //! either an `Authorization` header or [`forgejo_core::config::Credentials::store`], and there is
 //! no local binding for a `grep` to find or a `Debug` to print.
 
-use forgejo_core::config::secrets::CredentialStore;
+use forgejo_core::config::secrets::{CredentialStore, Token};
 use forgejo_core::config::{Config, Credentials, Env, HostEntry, HostKey, Hosts, SystemEnv};
 use forgejo_core::error::{ErrorKind, Result, TokenSource};
 use forgejo_core::http::{Auth, Client, Credentials as HttpCredentials};
+use forgejo_core::oauth::StoredOauth;
 
 /// The process environment as a `'static`, so [`Credentials`] can borrow it for the life of the
 /// command.
@@ -78,12 +79,69 @@ pub fn client_for(entry: &HostEntry, token: &str, source: TokenSource) -> Result
         .build()
 }
 
+/// A client for a resolved [`Credential`], sending the scheme that credential actually is.
+///
+/// The bug this prevents: checking an OAuth session with `Authorization: token <jwt>`. Forgejo
+/// happens to accept that today because its parser tries a JWT parse first, so the mistake would
+/// not show up until the day it stopped being true.
+pub fn client_for_kind(
+    entry: &HostEntry,
+    credential: &Credential,
+    source: TokenSource,
+) -> Result<Client> {
+    let auth = match credential {
+        Credential::Pat(_) => Auth::token(credential.expose()),
+        Credential::Oauth(_) => Auth::bearer(credential.expose()),
+    };
+    Client::builder(&entry.url, HttpCredentials::new(auth))
+        .user_agent(crate::runtime::user_agent())
+        .token_source(source)
+        .build()
+}
+
 /// `GET /user`, which is the only honest test of a token.
 ///
 /// Used by `login` to discover the login a token *actually* belongs to, and by `status` to answer
 /// "does this still work?".
 pub async fn whoami(client: &Client) -> Result<forgejo_model::User> {
     forgejo_client::ops::User::new(client).get_current().await
+}
+
+/// A resolved credential, whichever kind the store held.
+///
+/// Both `auth token` and `auth git-credential` read a credential and emit a secret, and both
+/// must emit the *access token* for an OAuth session rather than the stored document — which
+/// also carries the refresh token. Having one type with one `expose` is what keeps that from
+/// being two independent chances to print the wrong thing.
+pub enum Credential {
+    Pat(Token),
+    /// Boxed: `StoredOauth` is much the larger variant, and this is returned by value.
+    Oauth(Box<StoredOauth>),
+}
+
+impl Credential {
+    /// Classify a stored value. A personal access token does not parse as a document.
+    pub fn new(token: Token) -> Self {
+        match StoredOauth::parse(token.expose()) {
+            Some(s) => Self::Oauth(Box::new(s)),
+            None => Self::Pat(token),
+        }
+    }
+
+    /// The secret to send, which for an OAuth session is the access token and nothing else.
+    pub fn expose(&self) -> &str {
+        match self {
+            Self::Pat(t) => t.expose(),
+            Self::Oauth(s) => s.expose_access(),
+        }
+    }
+
+    pub fn session(&self) -> Option<&StoredOauth> {
+        match self {
+            Self::Oauth(s) => Some(s),
+            Self::Pat(_) => None,
+        }
+    }
 }
 
 /// A human label for a credential store, as `auth status` and `auth login` print it.

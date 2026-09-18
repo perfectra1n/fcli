@@ -46,21 +46,33 @@ pub fn run(globals: &GlobalOpts, _args: &Args) -> Result<()> {
         return Err(Error::new(ErrorKind::NotAuthenticated { host: key.to_string() }));
     };
 
+    // The bug this prevents: printing the stored value verbatim. For an OAuth session that
+    // value is a document containing *both* tokens, and the refresh token is the one that must
+    // never leave this machine — it is the session, where the access token is an hour of it.
+    let credential = common::Credential::new(token);
+
     let term = Term::detect();
     support::note(
         &term,
         "warning: this token is now in your terminal's scrollback; `fjo auth token | pbcopy` \
          or a pipe keeps it out of your history",
     );
+    if credential.session().is_some() {
+        support::note(
+            &term,
+            "note: this is an OAuth access token and expires within the hour; for a script or \
+             a CI job, create a token in the web UI instead",
+        );
+    }
 
     let mut out = support::writer(globals)?;
     // A newline for a human, none for a pipe. `$(fjo auth token)` strips a trailing newline
     // anyway, but `read -r -N` and a `curl --config -` do not, and a stray byte in an
     // `Authorization` header is a 401 nobody can explain.
     if term.tty {
-        writeln!(out, "{}", token.expose())?;
+        writeln!(out, "{}", credential.expose())?;
     } else {
-        out.write_all(token.expose().as_bytes())?;
+        out.write_all(credential.expose().as_bytes())?;
     }
     out.flush()?;
     Ok(())

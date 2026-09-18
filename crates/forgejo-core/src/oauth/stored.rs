@@ -137,6 +137,16 @@ impl StoredOauth {
         self.expires_at.duration_since(now) <= SignedDuration::from_secs(skew.as_secs() as i64)
     }
 
+    /// The access token as a `&str`, for the two places that must actually send it.
+    ///
+    /// Mirrors `Token::expose`, and exists for the same reason: the `fjo` crate deliberately
+    /// does not depend on `secrecy`, so exposing has to happen behind a method here rather than
+    /// through an `ExposeSecret` call at a call site that could too easily bind the result to a
+    /// named `String`.
+    pub fn expose_access(&self) -> &str {
+        self.access_token.expose_secret()
+    }
+
     /// Whether there is anything to refresh with.
     pub fn can_refresh(&self) -> bool {
         !self.refresh_token.expose_secret().is_empty()

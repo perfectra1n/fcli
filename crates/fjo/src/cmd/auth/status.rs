@@ -51,6 +51,16 @@ const FIELDS: &[FieldSpec] = &[
         doc: "whether GET /user succeeded just now",
     },
     FieldSpec { name: "scopes", kind: FieldKind::Array(&FieldKind::Str), doc: "recorded at login" },
+    FieldSpec {
+        name: "credential_kind",
+        kind: FieldKind::Enum(&["pat", "oauth2"]),
+        doc: "a personal access token, or an OAuth session",
+    },
+    FieldSpec {
+        name: "expires_at",
+        kind: FieldKind::Str,
+        doc: "when an OAuth access token lapses; null for a token",
+    },
     FieldSpec { name: "is_admin", kind: FieldKind::Bool, doc: "site administrator" },
     FieldSpec { name: "error", kind: FieldKind::Str, doc: "why authentication failed, or null" },
 ];
@@ -74,6 +84,29 @@ Shows token locations, never token values. Use `fjo auth token` to print a token
 /// process. Eight covers every realistic `hosts.toml` in one wave without behaving like a scanner.
 const HOSTS_AT_ONCE: usize = 8;
 
+/// How an OAuth session's remaining life reads in the human output.
+///
+/// `status` reports; it does not renew. An expired session showing as expired is the correct
+/// answer to "is my login working?", and a diagnostic that silently mutates the thing it is
+/// describing is a worse tool than one that does not.
+fn session_line(expires_at: &str) -> String {
+    let Ok(at) = expires_at.parse::<jiff::Timestamp>() else {
+        return format!("access token expires {expires_at}");
+    };
+    let secs = at.duration_since(jiff::Timestamp::now()).as_secs();
+    if secs <= 0 {
+        return "expired; run `fjo auth login --web` to renew it".to_owned();
+    }
+    // Forgejo issues hour-long access tokens by default, but the lifetime is an instance
+    // setting, and "expires in 38018984 minutes" is not a sentence anybody should read.
+    let left = match secs {
+        s if s < 60 * 60 => format!("{} minutes", s / 60),
+        s if s < 60 * 60 * 48 => format!("{} hours", s / 3600),
+        s => format!("{} days", s / 86_400),
+    };
+    format!("renews automatically; access token expires in {left}")
+}
+
 /// One (host, login) pair, checked.
 struct Row {
     host: HostKey,
@@ -84,6 +117,8 @@ struct Row {
     store: CredentialStore,
     source: Option<TokenSource>,
     scopes: Vec<String>,
+    kind: Option<&'static str>,
+    expires_at: Option<String>,
     /// `Ok(is_admin)` on success; the classified failure otherwise.
     outcome: std::result::Result<bool, Error>,
 }
@@ -100,6 +135,8 @@ impl Row {
             "token_source": self.source.as_ref().map(common::source_label),
             "authenticated": self.outcome.is_ok(),
             "scopes": self.scopes,
+            "credential_kind": self.kind,
+            "expires_at": self.expires_at,
             "is_admin": self.outcome.as_ref().ok().copied().unwrap_or(false),
             "error": self.outcome.as_ref().err().map(|e| render::headline(&e.kind)),
         })
@@ -196,6 +233,11 @@ struct Pending {
     store: CredentialStore,
     source: Option<TokenSource>,
     scopes: Vec<String>,
+    /// Which kind of credential is filed, read from the credential store rather than from
+    /// `hosts.toml`'s advisory `kind` — the store is the source of truth.
+    kind: Option<&'static str>,
+    /// When an OAuth access token lapses, RFC 3339. `None` for a personal access token.
+    expires_at: Option<String>,
     /// The client to ask `GET /user` with, or the failure that already settled this row — no
     /// token, an unusable URL. An `Err` here becomes the row's `outcome` untouched, so phase 2
     /// never has to re-derive a diagnosis phase 1 already made.
@@ -215,12 +257,36 @@ async fn check_all(pending: Vec<Pending>) -> Vec<Row> {
 
     futures::stream::iter(pending)
         .map(|p| async move {
-            let Pending { host, url, login, active, active_host, store, source, scopes, check } = p;
+            let Pending {
+                host,
+                url,
+                login,
+                active,
+                active_host,
+                store,
+                source,
+                scopes,
+                kind,
+                expires_at,
+                check,
+            } = p;
             let outcome = match check {
                 Ok(client) => common::whoami(&client).await.map(|u| u.is_admin),
                 Err(e) => Err(e),
             };
-            Row { host, url, login, active, active_host, store, source, scopes, outcome }
+            Row {
+                host,
+                url,
+                login,
+                active,
+                active_host,
+                store,
+                source,
+                scopes,
+                kind,
+                expires_at,
+                outcome,
+            }
         })
         .buffered(HOSTS_AT_ONCE)
         .collect()
@@ -252,19 +318,27 @@ fn plan_host(setup: &mut Setup, key: &HostKey, only: Option<&str>) -> Vec<Pendin
             common::warn(&kind);
         }
 
-        let (source, check) = match token {
-            Err(e) => (None, Err(e)),
-            Ok(None) => {
-                (None, Err(Error::new(ErrorKind::NotAuthenticated { host: key.to_string() })))
-            }
+        let (source, kind, expires_at, check) = match token {
+            Err(e) => (None, None, None, Err(e)),
+            Ok(None) => (
+                None,
+                None,
+                None,
+                Err(Error::new(ErrorKind::NotAuthenticated { host: key.to_string() })),
+            ),
             Ok(Some(t)) => {
                 let source = t.source().clone();
-                // The token is read here and never outlives this expression: what crosses into
-                // phase 2 is a built `Client` with the header already in it, so `Pending` carries
-                // no secret a `Debug` or a panic message could reach.
+                // The credential is read here and never outlives this expression: what crosses
+                // into phase 2 is a built `Client` with the header already in it, so `Pending`
+                // carries no secret a `Debug` or a panic message could reach. That holds for an
+                // OAuth session too, which is why only the expiry — not the document — is kept.
+                let credential = common::Credential::new(t);
+                let session = credential.session();
+                let kind = Some(if session.is_some() { "oauth2" } else { "pat" });
+                let expires_at = session.map(|s| s.expires_at.to_string());
                 let check = HostEntry::from_input(&url)
-                    .and_then(|e| common::client_for(&e, t.expose(), source.clone()));
-                (Some(source), check)
+                    .and_then(|e| common::client_for_kind(&e, &credential, source.clone()));
+                (Some(source), kind, expires_at, check)
             }
         };
 
@@ -277,6 +351,8 @@ fn plan_host(setup: &mut Setup, key: &HostKey, only: Option<&str>) -> Vec<Pendin
             store,
             source,
             scopes,
+            kind,
+            expires_at,
             check,
         });
     }
@@ -291,6 +367,8 @@ fn plan_host(setup: &mut Setup, key: &HostKey, only: Option<&str>) -> Vec<Pendin
             store: setup.hosts.cached_store(key).unwrap_or_default(),
             source: None,
             scopes: Vec::new(),
+            kind: None,
+            expires_at: None,
             check: Err(Error::new(ErrorKind::NotAuthenticated { host: key.to_string() })),
         });
     }
@@ -340,7 +418,18 @@ fn write_human(rows: &[Row], term: &Term, out: &mut dyn Write) -> std::io::Resul
         // Never the token. `fjo auth token` is the way to get the value, and this line says so
         // rather than leaving a reader to look for a flag that does not exist.
         writeln!(out, "  - Token: hidden; use `fjo auth token` to print it")?;
-        if row.scopes.is_empty() {
+        if let Some(at) = &row.expires_at {
+            writeln!(out, "  - OAuth session: {}", session_line(at))?;
+        }
+        if row.kind == Some("oauth2") {
+            // Not "unknown": Forgejo does not implement OAuth2 scopes at all, so an OAuth token
+            // can do whatever the user can. Offering `--scopes` here would be advice for a
+            // restriction that does not exist, which is worse than saying nothing.
+            writeln!(
+                out,
+                "  - Token scopes: not applicable (Forgejo does not scope OAuth tokens)"
+            )?;
+        } else if row.scopes.is_empty() {
             writeln!(
                 out,
                 "  - Token scopes: unknown (Forgejo does not report them; record them with \
@@ -367,6 +456,8 @@ mod tests {
             store: CredentialStore::Keyring,
             source: Some(TokenSource::Keyring { entry: "fjo:perf3ct@git.example.org".to_owned() }),
             scopes: vec!["read:repository".to_owned(), "write:issue".to_owned()],
+            kind: Some("pat"),
+            expires_at: None,
             outcome: if ok {
                 Ok(false)
             } else {
@@ -377,6 +468,51 @@ mod tests {
                 }))
             },
         }
+    }
+
+    /// The bug this prevents: `auth status` reading an OAuth credential — a document holding
+    /// *both* tokens — and letting any part of it reach a row, and from there the output that
+    /// people paste into bug reports. The row keeps the expiry and nothing else.
+    #[test]
+    fn a_status_row_carries_an_expiry_but_never_the_credential() {
+        let mut r = row(true);
+        r.kind = Some("oauth2");
+        r.expires_at = Some("2026-09-18T12:00:00Z".to_owned());
+        let json = r.to_json().to_string();
+        assert!(json.contains("\"credential_kind\":\"oauth2\""), "{json}");
+        assert!(json.contains("2026-09-18T12:00:00Z"), "{json}");
+        for forbidden in ["access_token", "refresh_token", "eyJ"] {
+            assert!(!json.contains(forbidden), "{forbidden} reached a status row: {json}");
+        }
+    }
+
+    /// A lapsed session must say so rather than report a negative countdown.
+    #[test]
+    fn an_expired_session_says_how_to_renew_it() {
+        assert!(session_line("2000-01-01T00:00:00Z").contains("fjo auth login --web"));
+        assert!(session_line("not a timestamp").contains("not a timestamp"));
+    }
+
+    /// Bug this prevents: "expires in 38018984 minutes". Forgejo's access tokens are hour-long
+    /// by default, but the lifetime is an instance setting and the unit has to keep up.
+    #[test]
+    fn a_long_lived_session_is_not_reported_in_minutes() {
+        let far = (jiff::Timestamp::now() + jiff::SignedDuration::from_hours(24 * 400)).to_string();
+        let line = session_line(&far);
+        assert!(line.contains("days"), "{line}");
+        assert!(!line.contains("minutes"), "{line}");
+    }
+
+    /// Forgejo does not implement OAuth2 scopes, so an OAuth row must not offer `--scopes` as a
+    /// remedy for a restriction that will never be applied.
+    #[test]
+    fn an_oauth_row_does_not_suggest_recording_scopes() {
+        let mut r = row(true);
+        r.kind = Some("oauth2");
+        r.scopes.clear();
+        let out = rendered(&[r]);
+        assert!(out.contains("not applicable"), "{out}");
+        assert!(!out.contains("--scopes"), "{out}");
     }
 
     fn rendered(rows: &[Row]) -> String {

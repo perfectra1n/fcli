@@ -79,6 +79,45 @@ fn with_file_token(dir: &Path) {
     .expect("write hosts.toml");
 }
 
+/// A refresh token that is easy to grep for, and must never appear on any stream.
+const PLANTED_REFRESH: &str = "f1cc0nly-planted-refresh-4b8e2c7d";
+
+/// A `hosts.toml` holding an OAuth session in the file store.
+///
+/// The expiry is far in the future on purpose: a session about to lapse would be refreshed, and
+/// these tests must not reach the network. Port 1 keeps that honest — nothing listens there, so
+/// a test that did try would fail loudly.
+fn with_oauth_session(dir: &Path) {
+    // A TOML literal string, so the JSON's own quotes need no escaping.
+    let blob = format!(
+        concat!(
+            r#"{{"v":1,"kind":"oauth2","access_token":"{}","refresh_token":"{}","#,
+            r#""expires_at":"2099-01-01T00:00:00Z","#,
+            r#""client_id":"a4792ccc-144e-407e-86c9-5e7d8d9c3269","#,
+            r#""token_endpoint":"http://localhost:1/login/oauth/access_token"}}"#,
+        ),
+        PLANTED_TOKEN, PLANTED_REFRESH,
+    );
+    std::fs::write(
+        dir.join("hosts.toml"),
+        format!(
+            "active = \"localhost:1\"\n\
+             \n\
+             [[hosts]]\n\
+             name = \"localhost:1\"\n\
+             url = \"http://localhost:1\"\n\
+             active_login = \"perf3ct\"\n\
+             credential_store = \"file\"\n\
+             \n\
+             [[hosts.logins]]\n\
+             user = \"perf3ct\"\n\
+             kind = \"oauth2\"\n\
+             token = '{blob}'\n"
+        ),
+    )
+    .expect("write hosts.toml");
+}
+
 /// A host with a recorded login but no credential anywhere.
 fn without_any_token(dir: &Path) {
     std::fs::write(
@@ -353,6 +392,59 @@ fn a_web_login_conflicts_with_a_token_login() {
 fn a_login_with_no_host_and_no_terminal_names_host() {
     let dir = tmp();
     cmd(dir.path()).args(["auth", "login"]).assert().code(2).stderr(contains("--host"));
+}
+
+/// THE bug an OAuth session introduces to this command.
+///
+/// `auth token` used to print the stored value verbatim, which was right when every stored value
+/// was a token. An OAuth session is stored as a document carrying *both* tokens, and the refresh
+/// token is the session itself — an access token is one hour of it. Printing the document would
+/// put the long-lived half on a terminal, in scrollback, and in whatever the user piped it into.
+#[test]
+fn auth_token_on_an_oauth_session_prints_the_access_token_and_not_the_refresh_token() {
+    let dir = tmp();
+    with_oauth_session(dir.path());
+    let out = cmd(dir.path()).args(["auth", "token"]).assert().success().get_output().clone();
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(stdout.trim(), PLANTED_TOKEN, "the access token is what git and curl want");
+    for stream in [&stdout, &stderr] {
+        assert!(!stream.contains(PLANTED_REFRESH), "the refresh token escaped: {stream}");
+        assert!(!stream.contains("\"v\":1"), "the stored document escaped: {stream}");
+    }
+}
+
+/// `auth status` reads the credential store, not the advisory `kind` in hosts.toml, and must
+/// report an OAuth session as one without letting any part of it reach the output.
+#[test]
+fn auth_status_reports_an_oauth_session_without_printing_it() {
+    let dir = tmp();
+    with_oauth_session(dir.path());
+    let out = cmd(dir.path())
+        .args(["auth", "status", "--json", "credential_kind,expires_at,login"])
+        .output()
+        .expect("fjo runs");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("oauth2"), "{stdout}");
+    assert!(stdout.contains("2099-01-01"), "the expiry is useful and is not a secret: {stdout}");
+    assert!(!stdout.contains(PLANTED_REFRESH), "{stdout}");
+    assert!(!stdout.contains(PLANTED_TOKEN), "{stdout}");
+}
+
+/// Logging out of an OAuth session must remove the whole document. This is the payoff of storing
+/// it as one value: there is no second key to forget and no way to leave a live refresh token
+/// behind.
+#[test]
+fn auth_logout_removes_the_whole_oauth_session() {
+    let dir = tmp();
+    with_oauth_session(dir.path());
+    cmd(dir.path()).args(["auth", "logout", "--yes"]).assert().success();
+
+    let left = std::fs::read_to_string(dir.path().join("hosts.toml")).unwrap_or_default();
+    assert!(!left.contains(PLANTED_REFRESH), "a live refresh token survived logout: {left}");
+    assert!(!left.contains(PLANTED_TOKEN), "{left}");
 }
 
 /// Bug this prevents: `auth logout` proceeding without confirmation in a script.
