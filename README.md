@@ -147,10 +147,7 @@ fjo auth switch --host codeberg.org
 fjo pr list --host git.example.org
 ```
 
-`--web` uses Forgejo's own OAuth2 provider: your browser opens, you click Authorize, and no
-secret crosses the clipboard. The session renews itself and lapses after about 30 days, so CI
-should keep using a token, which does not expire. Over SSH, add `--no-browser`. See
-[OAuth login](docs/oauth.md).
+`--web` uses Forgejo's own OAuth2 provider: your browser opens, you click Authorize, and no secret crosses the clipboard. The session renews itself and lapses after about 30 days, so CI should keep using a token, which does not expire. Over SSH, add `--no-browser`. See [OAuth login](docs/oauth.md).
 
 Tokens are stored in the OS keyring when available. Without a keyring, use `FORGEJO_TOKEN` or explicitly choose file storage. Token files use `0600` permissions.
 
