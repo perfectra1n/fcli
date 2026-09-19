@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.3](https://github.com/perfectra1n/fjo/compare/v0.2.2...v0.2.3) (2026-09-19)
+
+
+### Bug Fixes
+
+* **core:** resolve the host from the checkout's remotes, not `active` ([ae6b71c](https://github.com/perfectra1n/fjo/commit/ae6b71ce22d2b61ec1096a58d0bc3a446b62367f))
+* decide the host from the repository, not from `active` ([44ee20e](https://github.com/perfectra1n/fjo/commit/44ee20e86cec20a4cec9501dd3e25c92fef8562b))
+* **fjo:** build the client for the host the repository resolved to ([32845ed](https://github.com/perfectra1n/fjo/commit/32845ede8a26c38874d231937468d1d90e092aaa))
+
+
+### Documentation
+
+* say which server a command talks to, and why ([a2c6c20](https://github.com/perfectra1n/fjo/commit/a2c6c20fce906fa81e710347a54faf1737ef3817))
+
 ## [0.2.2](https://github.com/perfectra1n/fjo/compare/v0.2.1...v0.2.2) (2026-09-19)
 
 
