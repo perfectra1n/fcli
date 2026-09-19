@@ -1,5 +1,68 @@
 # Changelog
 
+## [0.2.2](https://github.com/perfectra1n/fjo/compare/v0.2.1...v0.2.2) (2026-09-19)
+
+
+### Features
+
+* **ci:** say whether spec drift is released or only on forgejo main ([048217b](https://github.com/perfectra1n/fjo/commit/048217b1301297efa37f1eb9af2c462da96874a9))
+* **ci:** say whether spec drift is released or only on forgejo main ([10b1c43](https://github.com/perfectra1n/fjo/commit/10b1c43b7d5b9eaf53d6fb4a3464115a249a6400)), closes [#16](https://github.com/perfectra1n/fjo/issues/16)
+* **config:** add the oauth_client_id preference ([51096f2](https://github.com/perfectra1n/fjo/commit/51096f27f3e0f26ad32565d159815fb14bac8a93))
+* **core:** add Auth::Bearer for OAuth2 access tokens ([52c4d62](https://github.com/perfectra1n/fjo/commit/52c4d62a784e5fb26d3331890c5f52af41de5d3e))
+* **core:** add URL-safe unpadded base64 ([5a21362](https://github.com/perfectra1n/fjo/commit/5a2136287646e8f4b3a6e564023f3d36e0162ff2))
+* **core:** OAuth error taxonomy ([e7ce6a8](https://github.com/perfectra1n/fjo/commit/e7ce6a805cc6aec087d080c315c37e1e65ebddbd))
+* **core:** OAuth2 PKCE, discovery and the token exchange ([92526a2](https://github.com/perfectra1n/fjo/commit/92526a267ca435fb50144f76357ebdc70ca47363))
+* **core:** POST form requests on the instance web root ([fd63069](https://github.com/perfectra1n/fjo/commit/fd630699b997b8ba8a699605d74143dcad7165ba))
+* **core:** redact OAuth codes and refresh tokens from traces ([98db522](https://github.com/perfectra1n/fjo/commit/98db522fe97caf4e285c2d91a8053cbc805e67ad))
+* **core:** store OAuth2 credentials as one versioned document ([4598fdf](https://github.com/perfectra1n/fjo/commit/4598fdf68cda8c2e1e2e34a4e40c2b128bb730cf))
+* **fjo:** fjo auth login --web ([fe27c1f](https://github.com/perfectra1n/fjo/commit/fe27c1fb53104c4441b680dd49435e94d63cb972))
+* **fjo:** loopback listener for the OAuth redirect ([9c5d046](https://github.com/perfectra1n/fjo/commit/9c5d0465ef961a380fb49acffaa904fe36b064bc))
+* **fjo:** refresh an expiring OAuth session before each command ([f8a721e](https://github.com/perfectra1n/fjo/commit/f8a721ebe29a6dbce4edea9a782f600909692483))
+* **fjo:** report OAuth sessions in auth status and auth token ([25500e9](https://github.com/perfectra1n/fjo/commit/25500e973a5af28d9b4339e2d2072ca28e416162))
+* log in through the browser with Forgejo's OAuth2 provider ([8a5883c](https://github.com/perfectra1n/fjo/commit/8a5883c2cbf858223b8ee88e5e9aca86ea0abfdd))
+* **xtask:** let spec-diff compare any two refs, not just against vendored ([2268c3c](https://github.com/perfectra1n/fjo/commit/2268c3c12883775709770637aa641bda82771c71))
+
+
+### Bug Fixes
+
+* **coverage:** name the lock file plainly in the unknown-id error ([dab7ab0](https://github.com/perfectra1n/fjo/commit/dab7ab07bffbbef8fa3651efde1ce8dc1fef573d))
+* **coverage:** start coverage-check from an empty journal directory ([62703fc](https://github.com/perfectra1n/fjo/commit/62703fc68b952204d69abd471eb58815ecadf448))
+* **fjo:** refresh before handing git a credential ([b5fb772](https://github.com/perfectra1n/fjo/commit/b5fb772dbd7a0bdee4c9487cc3a5199c0c4a5c22))
+* **itest:** bound the integration suite's wall clock ([92db776](https://github.com/perfectra1n/fjo/commit/92db7766311098df034c08de8085d3a6c22ba086))
+
+
+### Code Refactoring
+
+* **fjo:** open a URL without a Runtime ([d4944d6](https://github.com/perfectra1n/fjo/commit/d4944d63728d48d2c3bbd1965c203767d86c01b8))
+
+
+### Documentation
+
+* **coverage:** document the coverage ratchet and wire it into CI ([e0b7a2b](https://github.com/perfectra1n/fjo/commit/e0b7a2b0794de6fff57a3684dcd197c13f305f9c))
+* **coverage:** replace the coverage prose with measured numbers ([c1c8460](https://github.com/perfectra1n/fjo/commit/c1c8460179bd328e80669881e00230692ef63407))
+* unwrap the OAuth prose to match the rest ([af1b1ea](https://github.com/perfectra1n/fjo/commit/af1b1ea56330f20bc27582e1cce7a4727b63c48d))
+* unwrap the prose and stop claiming the commands are untested ([9d13392](https://github.com/perfectra1n/fjo/commit/9d133922c714c4a3e0c1e6927a9d6b37796f216c))
+
+
+### Tests
+
+* **coverage:** check every generated request against its own metadata ([fad675c](https://github.com/perfectra1n/fjo/commit/fad675cfa3ad692456ac30b157cfb648d53b0228))
+* **coverage:** record which commands the suites actually drove ([38acb1d](https://github.com/perfectra1n/fjo/commit/38acb1d0d354cbbec42233c31d81c2466e6aa36e))
+* **itest:** drive every command group against a real Forgejo ([9cb1df0](https://github.com/perfectra1n/fjo/commit/9cb1df0f84780ae3ce312b7d5a505af20057b23b))
+* **itest:** drive the local commands live and declare what the old suites drove ([0f137b4](https://github.com/perfectra1n/fjo/commit/0f137b459962c0da4799348904260d81af169135))
+* **itest:** drive the whole OAuth login, consent click included ([cbff857](https://github.com/perfectra1n/fjo/commit/cbff857ada2824cabf2236fe16b043bd8f483700))
+* **itest:** enable federation so the ActivityPub routes reach a handler ([11c35db](https://github.com/perfectra1n/fjo/commit/11c35dbd1549c33ea230c29abbbb05b11676b992))
+* **itest:** give federation its own instance instead of the shared one ([40f4d10](https://github.com/perfectra1n/fjo/commit/40f4d1009962114a30ff824f7e6a7cb6555f9f16))
+* **itest:** let a migration name this instance as its source ([028b6ff](https://github.com/perfectra1n/fjo/commit/028b6ff25c022f0e0bbd5d4dd84fbbf7e08ca903))
+* **itest:** measure Forgejo's OAuth2 provider, and record what cannot be ([a4197bc](https://github.com/perfectra1n/fjo/commit/a4197bccf8ad2b23a55ea768a73a2e17241680ac))
+* **itest:** stop the harness hiding forty-seven operations behind config ([cbe2134](https://github.com/perfectra1n/fjo/commit/cbe2134db70e8874a90f1258a18cc539c4932888))
+
+
+### Miscellaneous Chores
+
+* **spec:** bump vendored Forgejo spec to v16.0.5 (no API change) ([272f697](https://github.com/perfectra1n/fjo/commit/272f69743ac69b7bfc9bea06b77ee471c7d2eaed))
+* **spec:** bump vendored Forgejo spec to v16.0.5 (no API change) ([90f7d9e](https://github.com/perfectra1n/fjo/commit/90f7d9eb9ec1494559f88e2facc281d6c1367c54))
+
 ## [0.2.1](https://github.com/perfectra1n/fjo/compare/v0.2.0...v0.2.1) (2026-09-16)
 
 
