@@ -460,7 +460,7 @@ impl CredStore for FileStore {
         hosts: &mut Hosts,
     ) -> Result<TokenSource> {
         let copy = SecretString::from(token.expose_secret());
-        hosts.add_login(host, login, Some(copy), Vec::new())?;
+        hosts.add_login(host, login, Some(copy), Vec::new(), None)?;
         Ok(TokenSource::File { path: hosts.path().to_owned() })
     }
 
@@ -749,10 +749,11 @@ impl<'a> Credentials<'a> {
         login: &str,
         token: &SecretString,
         scopes: Vec<Scope>,
+        kind: Option<&str>,
     ) -> Result<TokenSource> {
         // Record the identity first so `hosts.toml` is consistent even if the secret write
         // fails; being listed without a token yields "not authenticated", which is true.
-        hosts.add_login(host, login, None, scopes)?;
+        hosts.add_login(host, login, None, scopes, kind)?;
 
         let target = match (self.forced, self.insecure) {
             (Some(forced), _) => forced,
@@ -816,7 +817,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut hosts = Hosts::empty_at(&dir.path().join("hosts.toml"));
         let key = hosts.add_host("https://git.example.org").unwrap().name.clone();
-        hosts.add_login(&key, "perf3ct", None, vec![]).unwrap();
+        hosts.add_login(&key, "perf3ct", None, vec![], None).unwrap();
         (dir, hosts, key)
     }
 
@@ -827,7 +828,14 @@ mod tests {
         let mut creds = Credentials::new(&env).with_keyring(Box::new(FakeKeyring::new()));
 
         let source = creds
-            .store(&mut hosts, &key, "perf3ct", &"tok-123".into(), vec!["read:repository".into()])
+            .store(
+                &mut hosts,
+                &key,
+                "perf3ct",
+                &"tok-123".into(),
+                vec!["read:repository".into()],
+                None,
+            )
             .unwrap();
         assert!(matches!(source, TokenSource::Keyring { .. }));
         // The token must NOT be in hosts.toml when the keyring is in use.
@@ -845,7 +853,7 @@ mod tests {
         // Regression net for the headless / container / CI / SSH case: a missing D-Bus
         // Secret Service must be a warning, not a failure.
         let (_d, mut hosts, key) = fixture();
-        hosts.add_login(&key, "perf3ct", Some("file-tok".into()), vec![]).unwrap();
+        hosts.add_login(&key, "perf3ct", Some("file-tok".into()), vec![], None).unwrap();
         let env = MapEnv::new();
         let mut creds = Credentials::new(&env)
             .with_keyring(Box::new(FakeKeyring::unavailable(KeyringCause::NoBackend)));
@@ -881,7 +889,7 @@ mod tests {
         let env = MapEnv::new();
         let mut creds = Credentials::new(&env)
             .with_keyring(Box::new(FakeKeyring::unavailable(KeyringCause::NoBackend)));
-        let source = creds.store(&mut hosts, &key, "perf3ct", &"tok".into(), vec![]).unwrap();
+        let source = creds.store(&mut hosts, &key, "perf3ct", &"tok".into(), vec![], None).unwrap();
         assert!(matches!(source, TokenSource::File { .. }));
         assert!(!creds.warnings().is_empty());
         let on_disk = std::fs::read_to_string(hosts.path()).unwrap();
@@ -908,7 +916,7 @@ mod tests {
         assert!(creds.token(&mut hosts, &key, "perf3ct").unwrap().is_none());
         assert_eq!(creds.effective_store(&hosts, &key), CredentialStore::Env);
         // And it refuses to pretend it saved anything.
-        assert!(creds.store(&mut hosts, &key, "perf3ct", &"x".into(), vec![]).is_err());
+        assert!(creds.store(&mut hosts, &key, "perf3ct", &"x".into(), vec![], None).is_err());
     }
 
     #[test]
@@ -927,7 +935,7 @@ mod tests {
         let mut writer = Credentials::new(&empty)
             .with_keyring(Box::new(FakeKeyring::new()))
             .insecure_storage(true);
-        writer.store(&mut hosts, &key, "perf3ct", &"filetok".into(), vec![]).unwrap();
+        writer.store(&mut hosts, &key, "perf3ct", &"filetok".into(), vec![], None).unwrap();
         let before = hosts.cached_store(&key);
 
         let env = MapEnv::new().with(STORE_VAR, "env").with("FORGEJO_TOKEN", "envtok");
@@ -959,7 +967,7 @@ mod tests {
         let mut creds = Credentials::new(&env)
             .with_keyring(Box::new(FakeKeyring::new()))
             .insecure_storage(true);
-        let source = creds.store(&mut hosts, &key, "perf3ct", &"tok".into(), vec![]).unwrap();
+        let source = creds.store(&mut hosts, &key, "perf3ct", &"tok".into(), vec![], None).unwrap();
         assert!(matches!(source, TokenSource::File { .. }));
         assert!(std::fs::read_to_string(hosts.path()).unwrap().contains("tok"));
     }
@@ -977,7 +985,7 @@ mod tests {
         // The whole point of caching: no D-Bus round trip on every invocation.
         let (_d, mut hosts, key) = fixture();
         hosts.set_cached_store(&key, CredentialStore::File);
-        hosts.add_login(&key, "perf3ct", Some("file-tok".into()), vec![]).unwrap();
+        hosts.add_login(&key, "perf3ct", Some("file-tok".into()), vec![], None).unwrap();
         let env = MapEnv::new();
         // A keyring that would panic the test if consulted.
         let mut creds = Credentials::new(&env)
@@ -1008,7 +1016,7 @@ mod tests {
     #[test]
     fn forget_clears_the_file_even_if_the_keyring_is_broken() {
         let (_d, mut hosts, key) = fixture();
-        hosts.add_login(&key, "perf3ct", Some("tok".into()), vec![]).unwrap();
+        hosts.add_login(&key, "perf3ct", Some("tok".into()), vec![], None).unwrap();
         let env = MapEnv::new();
         let mut creds = Credentials::new(&env)
             .with_keyring(Box::new(FakeKeyring::unavailable(KeyringCause::Denied)));

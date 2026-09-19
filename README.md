@@ -140,12 +140,14 @@ Use `--paginate` to fetch all pages or `--limit N` to cap the total number of it
 You can configure multiple servers and multiple accounts per server:
 
 ```bash
-fjo auth login --host codeberg.org
-fjo auth login --host git.example.org
+fjo auth login --host codeberg.org             # paste a token
+fjo auth login --host codeberg.org --web       # or log in through your browser
 fjo auth status
 fjo auth switch --host codeberg.org
 fjo pr list --host git.example.org
 ```
+
+`--web` uses Forgejo's own OAuth2 provider: your browser opens, you click Authorize, and no secret crosses the clipboard. The session renews itself and lapses after about 30 days, so CI should keep using a token, which does not expire. Over SSH, add `--no-browser`. See [OAuth login](docs/oauth.md).
 
 Tokens are stored in the OS keyring when available. Without a keyring, use `FORGEJO_TOKEN` or explicitly choose file storage. Token files use `0600` permissions.
 
@@ -228,6 +230,7 @@ CI also checks code-quality counts, startup time, and binary size. When a count 
 ## Documentation
 
 - [API layers](docs/layers.md)
+- [OAuth login](docs/oauth.md)
 - [Output and exit codes](docs/output.md)
 - [Differences from gh](docs/gh-differences.md)
 - [Command conventions](docs/porcelain-conventions.md)

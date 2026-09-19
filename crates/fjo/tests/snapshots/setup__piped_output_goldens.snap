@@ -7,6 +7,7 @@ browser		default
 color	auto	default
 credential_store	keyring	default
 editor	hx	config
+oauth_client_id		default
 pager		default
 prompt	enabled	default
 

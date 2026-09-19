@@ -25,8 +25,8 @@ use std::fmt::Write as _;
 use anstyle::{AnsiColor, Style};
 
 use super::{
-    AgitRemedy, Attempt, Error, ErrorKind, FailedCheck, FieldError, KeyringCause, Phase,
-    RemoteCandidate, RequestCtx, TokenSource,
+    AgitRemedy, Attempt, CallbackFailure, CredentialKind, Error, ErrorKind, FailedCheck,
+    FieldError, KeyringCause, Phase, RemoteCandidate, RequestCtx, TokenSource,
 };
 
 /// Whether to emit ANSI styling.
@@ -254,6 +254,23 @@ pub fn headline(kind: &ErrorKind) -> String {
         KeyringUnavailable { .. } => "OS keyring is unavailable".to_owned(),
         CredFilePermissions { .. } => "your credentials file can be read by other users".to_owned(),
 
+        OauthNotSupported { host, .. } => format!("{host} does not offer OAuth login"),
+        OauthAuthorizationDenied { host, .. } => format!("{host} did not authorize fjo"),
+        OauthStateMismatch { host } => {
+            format!("the OAuth reply from {host} did not match the request")
+        }
+        OauthCallbackUnavailable { reason, .. } => match reason {
+            CallbackFailure::Timeout(secs) => {
+                format!("nothing came back from your browser within {secs}s")
+            }
+            CallbackFailure::Bind(_) => "fjo could not listen for the OAuth reply".to_owned(),
+        },
+        OauthTokenExchangeFailed { host, .. } => format!("{host} refused the OAuth code"),
+        OauthRefreshFailed { host, .. } => format!("your OAuth session for {host} has expired"),
+        OauthEntropyUnavailable { .. } => {
+            "could not generate a secure random value for the login".to_owned()
+        }
+
         NotAGitRepo => "not in a Git checkout; specify a repository with -R".to_owned(),
         RepoNotResolved { .. } => "could not determine the repository".to_owned(),
         AmbiguousRemote { .. } => "multiple Git remotes match; select a repository".to_owned(),
@@ -411,6 +428,20 @@ pub fn render(err: &Error, color: Color) -> String {
 }
 
 /// `POST /api/v1/repos/perf3ct/fjo/issues`
+/// The server's own words for an OAuth failure, preferring `error_description` over the bare
+/// `error` code.
+///
+/// Forgejo's OAuth handlers return both, and the description is the one written for a human —
+/// "PKCE is required for public clients" says what to fix, where `invalid_request` does not.
+/// Neither is ever paraphrased: `docs/porcelain-conventions.md` is explicit that a server
+/// message is never swallowed, and a guess about someone else's error is worse than a quote.
+fn oauth_reason(error: &str, description: &Option<String>) -> String {
+    match description {
+        Some(d) if !d.trim().is_empty() => d.clone(),
+        _ => error.to_owned(),
+    }
+}
+
 fn request_line(ctx: &RequestCtx) -> Option<String> {
     let path = ctx.path.as_deref()?;
     Some(match &ctx.method {
@@ -441,6 +472,10 @@ fn credential_relevant(kind: &ErrorKind) -> bool {
             | TwoFactorRequired { .. }
             | Forbidden { .. }
             | RepoNotFound { .. }
+            | OauthStateMismatch { .. }
+            | OauthCallbackUnavailable { .. }
+            | OauthTokenExchangeFailed { .. }
+            | OauthRefreshFailed { .. }
     )
 }
 
@@ -701,20 +736,130 @@ fn advise(kind: &ErrorKind, ctx: &RequestCtx) -> Advice {
                 "in CI, set FJO_TOKEN or FORGEJO_TOKEN instead of logging in.",
             )),
 
-        TokenRejected { host, login, settings_url } => a
+        // The same 401, from the same place, with two different remedies. Which one depends on
+        // what was actually presented, which is why `RequestCtx` carries the credential kind.
+        // Sending someone whose OAuth session lapsed to the token settings page is sending them
+        // to the wrong screen, and they will do what it says before discovering that.
+        TokenRejected { host, login, settings_url } => {
+            let a = a.fact("host", host).fact("login", login.clone().unwrap_or_default());
+            match ctx.credential_kind {
+                Some(CredentialKind::Oauth2) => a
+                    .todo(Line::text(
+                        "your OAuth session has expired or been revoked.",
+                    ))
+                    .todo(Line::step(1, format!("fjo auth login --host {host} --web")))
+                    .todo(Line::step(2, format!("fjo auth login --host {host}")))
+                    .todo(Line::note(
+                        "OAuth sessions lapse after about 30 days; a token made in the web UI does not.",
+                    )),
+                _ => a
+                    .todo(Line::text(
+                        "the token may be expired, revoked, or from another server.",
+                    ))
+                    .todo(
+                        Line::text("1. create a new token at ")
+                            .and_url(settings_url.clone())
+                            .hang(3),
+                    )
+                    .todo(Line::step(2, format!("fjo auth login --host {host}")))
+                    .todo(Line::note(
+                        "replacing a token requires creating a new one.",
+                    )),
+            }
+        }
+
+        OauthNotSupported { host, tried } => a
             .fact("host", host)
-            .fact("login", login.clone().unwrap_or_default())
+            .fact("tried", tried.join(", "))
             .todo(Line::text(
-                "the token may be expired, revoked, or from another server.",
+                "this instance answered nothing at its OAuth2 endpoints.",
             ))
-            .todo(
-                Line::text("1. create a new token at ")
-                    .and_url(settings_url.clone())
-                    .hang(3),
-            )
+            .todo(Line::step(1, format!("fjo auth login --host {host}")))
+            .todo(Line::step(2, "fjo api version"))
+            .todo(Line::note(
+                "an administrator can switch the built-in OAuth applications off with [oauth2] DEFAULT_APPLICATIONS.",
+            )),
+
+        OauthAuthorizationDenied { host, error, description } => a
+            .fact("reason", oauth_reason(error, description))
+            .fact("code", error)
+            .todo(Line::text("the browser came back without authorizing fjo."))
+            .todo(Line::step(1, format!("fjo auth login --host {host} --web")))
             .todo(Line::step(2, format!("fjo auth login --host {host}")))
             .todo(Line::note(
-                "replacing a token requires creating a new one.",
+                "access_denied usually means the Authorize button was not clicked.",
+            )),
+
+        OauthStateMismatch { host } => a
+            .fact("host", host)
+            .todo(Line::text(
+                "the reply did not carry the value fjo sent, so no code was exchanged.",
+            ))
+            .todo(Line::step(1, format!("fjo auth login --host {host} --web")))
+            .todo(Line::note(
+                "this can mean two logins were running at once; run one at a time.",
+            )),
+
+        OauthCallbackUnavailable { host, port, reason } => {
+            let a = match reason {
+                CallbackFailure::Timeout(_) => a
+                    .fact(
+                        "listening on",
+                        port.map_or_else(
+                            || "127.0.0.1".to_owned(),
+                            |p| format!("http://127.0.0.1:{p}"),
+                        ),
+                    )
+                    .todo(Line::text("the browser never reached fjo.")),
+                CallbackFailure::Bind(cause) => {
+                    a.fact("cause", cause).todo(Line::text(
+                        "fjo could not open a socket on 127.0.0.1 to receive the reply.",
+                    ))
+                }
+            };
+            a.todo(Line::step(
+                1,
+                format!("fjo auth login --host {host} --web --no-browser"),
+            ))
+            .todo(Line::step(2, format!("fjo auth login --host {host} --with-token")))
+            .todo(Line::note(
+                "over SSH, forward the port with ssh -L, or use --no-browser and paste the reply back.",
+            ))
+        }
+
+        OauthTokenExchangeFailed { host, error, description } => a
+            .fact("reason", oauth_reason(error, description))
+            .fact("code", error)
+            .todo(Line::text("the authorization code was refused."))
+            .todo(Line::step(1, format!("fjo auth login --host {host} --web")))
+            .todo(Line::step(2, format!("fjo auth login --host {host}")))
+            .todo(Line::note(
+                "if this instance registers its own application, pass its --client-id.",
+            )),
+
+        OauthRefreshFailed { host, login, reason } => a
+            .fact("login", login)
+            .fact(
+                "reason",
+                reason.clone().unwrap_or_else(|| "the refresh token was not accepted".to_owned()),
+            )
+            .todo(Line::text(
+                "OAuth sessions last about 30 days and cannot be renewed once they lapse.",
+            ))
+            .todo(Line::step(1, format!("fjo auth login --host {host} --web")))
+            .todo(Line::step(2, format!("fjo auth login --host {host}")))
+            .todo(Line::note(
+                "a token created in the web UI never expires, which is what CI should use.",
+            )),
+
+        OauthEntropyUnavailable { cause } => a
+            .fact("cause", cause)
+            .todo(Line::text(
+                "a browser login needs unguessable values, and the OS random source refused.",
+            ))
+            .todo(Line::step(1, "fjo auth login --with-token"))
+            .todo(Line::note(
+                "this usually means a restricted sandbox or a seccomp filter blocking getrandom.",
             )),
 
         // Reproduces the worked example in the plan, because the wording is the design.
@@ -1375,6 +1520,7 @@ mod tests {
             repo: Some("perf3ct/fjo".into()),
             status: Some(403),
             token_source: Some(TokenSource::Keyring { entry: "fjo:git.example.org".into() }),
+            credential_kind: Some(CredentialKind::Pat),
         }
     }
 
@@ -1394,6 +1540,13 @@ mod tests {
             UnknownHost { .. } => "UnknownHost",
             NotAuthenticated { .. } => "NotAuthenticated",
             TokenRejected { .. } => "TokenRejected",
+            OauthNotSupported { .. } => "OauthNotSupported",
+            OauthAuthorizationDenied { .. } => "OauthAuthorizationDenied",
+            OauthStateMismatch { .. } => "OauthStateMismatch",
+            OauthCallbackUnavailable { .. } => "OauthCallbackUnavailable",
+            OauthTokenExchangeFailed { .. } => "OauthTokenExchangeFailed",
+            OauthRefreshFailed { .. } => "OauthRefreshFailed",
+            OauthEntropyUnavailable { .. } => "OauthEntropyUnavailable",
             InsufficientScope { .. } => "InsufficientScope",
             TwoFactorRequired { .. } => "TwoFactorRequired",
             KeyringUnavailable { .. } => "KeyringUnavailable",
@@ -1489,6 +1642,42 @@ mod tests {
                 login: Some("perf3ct".into()),
                 settings_url: "https://git.example.org/user/settings/applications".into(),
             },
+            OauthNotSupported {
+                host: "git.example.org".into(),
+                tried: vec![
+                    "/.well-known/openid-configuration".into(),
+                    "/login/oauth/access_token".into(),
+                ],
+            },
+            OauthAuthorizationDenied {
+                host: "git.example.org".into(),
+                error: "access_denied".into(),
+                description: Some("the user denied the request".into()),
+            },
+            OauthStateMismatch { host: "git.example.org".into() },
+            // Both shapes: they render different headlines and different facts, and the gate
+            // below only guarantees a runnable command for what it is actually handed.
+            OauthCallbackUnavailable {
+                host: "git.example.org".into(),
+                port: Some(45231),
+                reason: CallbackFailure::Timeout(120),
+            },
+            OauthCallbackUnavailable {
+                host: "git.example.org".into(),
+                port: None,
+                reason: CallbackFailure::Bind("permission denied".into()),
+            },
+            OauthTokenExchangeFailed {
+                host: "git.example.org".into(),
+                error: "invalid_request".into(),
+                description: Some("PKCE is required for public clients".into()),
+            },
+            OauthRefreshFailed {
+                host: "git.example.org".into(),
+                login: "perf3ct".into(),
+                reason: Some("invalid_grant".into()),
+            },
+            OauthEntropyUnavailable { cause: "Operation not permitted (os error 1)".into() },
             InsufficientScope {
                 host: "git.example.org".into(),
                 needed: vec!["write:issue".into()],
@@ -1753,6 +1942,34 @@ mod tests {
             assert!(text.starts_with("error: "), "{name}: {text}");
             assert!(text.contains("what to do:"), "{name}: {text}");
         }
+    }
+
+    /// Bug this prevents: an expired OAuth session rendering the personal-access-token advice,
+    /// which sends the user to /user/settings/applications to make a token they do not need and
+    /// cannot use to fix the thing that broke.
+    #[test]
+    fn a_rejected_oauth_session_is_told_to_log_in_again_not_to_make_a_token() {
+        let kind = ErrorKind::TokenRejected {
+            host: "git.example.org".into(),
+            login: Some("perf3ct".into()),
+            settings_url: "https://git.example.org/user/settings/applications".into(),
+        };
+
+        let mut oauth = ctx();
+        oauth.credential_kind = Some(CredentialKind::Oauth2);
+        let text = render(&Error { kind: Box::new(kind), ctx: Box::new(oauth) }, Color::Never);
+        assert!(text.contains("fjo auth login --host git.example.org --web"), "{text}");
+        assert!(!text.contains("create a new token"), "{text}");
+
+        let kind = ErrorKind::TokenRejected {
+            host: "git.example.org".into(),
+            login: Some("perf3ct".into()),
+            settings_url: "https://git.example.org/user/settings/applications".into(),
+        };
+        let pat = ctx();
+        assert_eq!(pat.credential_kind, Some(CredentialKind::Pat));
+        let text = render(&Error { kind: Box::new(kind), ctx: Box::new(pat) }, Color::Never);
+        assert!(text.contains("create a new token"), "{text}");
     }
 
     /// A headline is the one line a user reads first, and it has a house style: lowercase start,

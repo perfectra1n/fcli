@@ -521,6 +521,18 @@ impl Instance {
         format!("{}/api/v1", self.base_url)
     }
 
+    /// The admin's web password, when this harness created the account.
+    ///
+    /// `None` when we attached to a pre-existing instance through `FJO_TEST_HOST`, because then
+    /// the account is somebody else's and we only ever had a token for it.
+    ///
+    /// Exists for one test: the OAuth browser login, which is the only thing in the suite that
+    /// needs a *web session* rather than an API token. Everything else authenticates with
+    /// [`Instance::token`], and should keep doing so — a password is not a better token.
+    pub fn web_password(&self) -> Option<&'static str> {
+        self.container.as_ref().map(|_| ADMIN_PASS)
+    }
+
     /// A repository name unique within this process, so tests can run in parallel against one
     /// instance without colliding.
     pub fn unique_repo_name(&self, prefix: &str) -> String {

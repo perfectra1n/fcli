@@ -28,6 +28,7 @@ pub mod api;
 pub mod cmd;
 pub mod exit;
 pub mod global;
+pub mod oauth_refresh;
 pub mod output;
 pub mod raw;
 pub mod runtime;

@@ -23,7 +23,7 @@ use clap::Args as ClapArgs;
 use forgejo_core::Result;
 use forgejo_core::config::HostKey;
 
-use super::common::Setup;
+use super::common::{self, Setup};
 use crate::global::GlobalOpts;
 
 #[derive(Debug, ClapArgs)]
@@ -106,10 +106,22 @@ fn read_request(input: &mut dyn BufRead) -> Result<Request> {
 /// bare hostname lookup, because two Forgejo instances can sit behind one authority at different
 /// path prefixes — the case `setup-git` enables `credential.useHttpPath` for. Matching on the
 /// authority alone would hand instance A's token to instance B.
-fn lookup(
-    globals: &GlobalOpts,
-    request: &Request,
-) -> Option<(String, forgejo_core::config::Token)> {
+/// Resolve a credential for the host git is asking about, renewing an OAuth session first.
+///
+/// # Why the refresh belongs here and not only in `Runtime`
+///
+/// `git` invokes this helper whenever it needs a password, which is typically hours after
+/// `auth login` and never through `Runtime`. An OAuth access token lives an hour, so without
+/// this every `git push` after the first would hand git a token the server has already stopped
+/// accepting.
+///
+/// # Why a failed refresh is still silent
+///
+/// The module contract above: on `get`, a helper that cannot answer says nothing and exits 0.
+/// Returning an error here would make one lapsed session break `git push` outright instead of
+/// letting git fall through to the next helper or prompt. That is a genuinely different failure
+/// policy from `Runtime::new`'s warn-and-continue, and it is the protocol's, not a choice.
+fn lookup(globals: &GlobalOpts, request: &Request) -> Option<(String, common::Credential)> {
     let host = request.get("host")?;
     let path = request.get("path").unwrap_or("");
     let mut setup = Setup::load().ok()?;
@@ -125,9 +137,40 @@ fn lookup(
     let login = setup.hosts.resolve_login(&key, globals.login.as_deref()).ok()?;
     let mut creds = setup.credentials(Some(&key));
     let token = creds.token(&mut setup.hosts, &key, &login).ok()??;
+    let credential = common::Credential::new(token);
+
+    // Renew before answering, if it is an OAuth session that is about to lapse. A failure is
+    // swallowed on purpose (see above): the old access token may still have minutes left, and
+    // if it does not, git's own 401 handling is a better outcome than a failed push.
+    let credential = match credential.session() {
+        Some(s)
+            if s.can_refresh()
+                && s.is_expiring(crate::oauth_refresh::SKEW, jiff::Timestamp::now()) =>
+        {
+            let url = setup.hosts.get(&key).map(|e| e.url.clone());
+            match url.and_then(|u| {
+                crate::oauth_refresh::refresh_blocking(
+                    s,
+                    &mut setup.hosts,
+                    &key,
+                    &login,
+                    &mut creds,
+                    &u,
+                )
+                .ok()
+            }) {
+                Some(fresh) => common::Credential::Oauth(Box::new(fresh)),
+                None => credential,
+            }
+        }
+        _ => credential,
+    };
+
     // Deliberately not saving `hosts.toml` here: git can invoke a helper many times during one
-    // fetch, and rewriting the file under a `git` process's feet buys nothing.
-    Some((login, token))
+    // fetch, and rewriting the file under a `git` process's feet buys nothing. A refresh is the
+    // exception and saves itself, because a rotated refresh token that is not recorded is a
+    // session that cannot be renewed again.
+    Some((login, credential))
 }
 
 #[cfg(test)]

@@ -8,6 +8,7 @@ use forgejo_core::error::{Result, TokenSource};
 use forgejo_core::types::Scope;
 
 use super::common::{self, Setup};
+use super::web_login;
 use crate::cmd::support;
 use crate::global::GlobalOpts;
 use crate::output::Term;
@@ -40,6 +41,26 @@ pub struct Args {
     /// Scopes the token was created with, recorded so a 403 can say what it has
     #[arg(long, value_name = "SCOPES", value_delimiter = ',')]
     pub scopes: Vec<String>,
+
+    // Long-only on purpose, and not a doc comment because this is a note to the next person
+    // editing this file rather than to a user reading --help. Every other `-w` in fjo means
+    // "show me this in a browser *instead of* acting"; here the browser is how the acting
+    // happens, so `fjo auth login -w` would read as "open the login page" and do something else.
+    /// Log in through your browser instead of pasting a token
+    #[arg(long, conflicts_with_all = ["with_token", "token"])]
+    pub web: bool,
+
+    /// Print the authorization URL instead of opening a browser, and paste the reply back
+    #[arg(long, requires = "web")]
+    pub no_browser: bool,
+
+    /// OAuth client id, if this instance registers its own application
+    #[arg(long, value_name = "ID", requires = "web")]
+    pub client_id: Option<String>,
+
+    /// Seconds to wait for the browser to come back
+    #[arg(long, value_name = "SECONDS", requires = "web", default_value_t = 120)]
+    pub timeout: u64,
 }
 
 const LONG_HELP: &str = "\
@@ -49,7 +70,14 @@ The token is checked with GET /user and saved under the account it belongs to.
 If the keyring is unavailable, fjo reports the fallback to hosts.toml with
 0600 permissions.
 
+With --web, fjo opens your browser, you click Authorize, and the session is
+stored without a token ever crossing the clipboard. OAuth sessions are renewed
+automatically and lapse after about 30 days; a token created in the web UI does
+not expire, which is what CI should use.
+
   fjo auth login --host codeberg.org
+  fjo auth login --host codeberg.org --web
+  fjo auth login --host git.example.org --web --no-browser
   fjo auth login --host git.example.org --with-token < token.txt
   echo $TOKEN | fjo auth login --host git.example.org --with-token";
 
@@ -79,6 +107,32 @@ pub fn run(globals: &GlobalOpts, args: &Args) -> Result<()> {
         (entry.url.clone(), entry.token_settings_url())
     };
 
+    if args.web {
+        if !args.scopes.is_empty() {
+            // Recording them would make a later `InsufficientScope` print `token has: ...` for a
+            // restriction Forgejo never applied, which is worse than saying nothing.
+            support::note(
+                &term,
+                "note: --scopes is ignored for --web; Forgejo does not enforce scopes on an \
+                 OAuth token",
+            );
+        }
+        return web_login::run(
+            setup,
+            web_login::Ctx {
+                globals,
+                key,
+                url,
+                term,
+                interactive,
+                client_id: args.client_id.clone(),
+                no_browser: args.no_browser,
+                timeout: std::time::Duration::from_secs(args.timeout),
+                insecure_storage: args.insecure_storage,
+            },
+        );
+    }
+
     let token = read_token(args, &settings_url, interactive, &term)?;
     let scopes: Vec<Scope> = args.scopes.iter().map(|s| Scope::from(s.trim())).collect();
 
@@ -101,8 +155,14 @@ pub fn run(globals: &GlobalOpts, args: &Args) -> Result<()> {
         }
 
         let mut creds = setup.credentials(Some(&key)).insecure_storage(args.insecure_storage);
-        let source =
-            creds.store(&mut setup.hosts, &key, &me.login, &token.as_str().into(), scopes)?;
+        let source = creds.store(
+            &mut setup.hosts,
+            &key,
+            &me.login,
+            &token.as_str().into(),
+            scopes,
+            Some("pat"),
+        )?;
 
         setup.hosts.set_active(&key)?;
         setup.hosts.select_login(&key, &me.login)?;
@@ -226,8 +286,16 @@ mod tests {
     /// failing with a message that does not name the flag to use instead.
     #[test]
     fn a_non_interactive_login_with_no_token_names_with_token() {
-        let args =
-            Args { with_token: false, token: None, insecure_storage: false, scopes: Vec::new() };
+        let args = Args {
+            with_token: false,
+            token: None,
+            insecure_storage: false,
+            scopes: Vec::new(),
+            web: false,
+            no_browser: false,
+            client_id: None,
+            timeout: 120,
+        };
         let e = read_token(&args, "https://h/user/settings/applications", false, &Term::piped())
             .unwrap_err();
         assert_eq!(e.exit_code(), 2);

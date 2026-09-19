@@ -46,7 +46,7 @@ use serde::de::DeserializeOwned;
 
 use crate::capabilities::{self, Capabilities};
 use crate::error::classify::{self, ClassifyCtx, RepoProbe};
-use crate::error::{Error, ErrorKind, RequestCtx, Result, TokenSource};
+use crate::error::{CredentialKind, Error, ErrorKind, RequestCtx, Result, TokenSource};
 
 /// The HTTP method type, re-exported.
 ///
@@ -474,6 +474,11 @@ impl Client {
         &self.inner.host
     }
 
+    /// The account this client is acting as, when one is known.
+    pub fn login(&self) -> Option<&str> {
+        self.inner.login.as_deref()
+    }
+
     /// Where a user creates a token on this instance. Every auth error message points here.
     pub fn settings_url(&self) -> String {
         format!("{}/user/settings/applications", self.inner.web_base)
@@ -568,17 +573,117 @@ impl Client {
     /// 3986 dot-segment removal to climb out of `/api/v1`. That works, and it is not something a
     /// reader should have to reconstruct.
     pub async fn web_bytes(&self, url: &str) -> Result<(Mime, ByteStream)> {
-        let req = self.web_request(url)?;
-        let resp = self.send(&req, Some(url)).await.map_err(|mut e| {
-            // `wire_path` prefixes the API subpath, which is right for every other request and
-            // wrong for this one — the URL is on the web root. Correct it so the `request:`
-            // line names what was actually fetched rather than an `/api/v1/…` path that does
-            // not exist.
+        let req = self.web_request(Method::GET, url)?;
+        let resp = self.web_send(&req, url).await?;
+        let mime = Mime::new(resp.content_type().unwrap_or("application/octet-stream"));
+        Ok((mime, resp.body))
+    }
+
+    /// GET a JSON document from the instance's web root.
+    ///
+    /// Same host check, retry policy and redaction as [`Client::web_bytes`]; the only difference
+    /// is that the body is collected and deserialised. Exists for OpenID Connect discovery,
+    /// which lives at `/.well-known/openid-configuration` and so is not an API route.
+    pub async fn web_json<T: DeserializeOwned>(&self, url: &str) -> Result<T> {
+        let mut req = self.web_request(Method::GET, url)?;
+        req.accept = Accept::Json;
+        let resp = self.web_send(&req, url).await?;
+        let bytes = resp.bytes().await?;
+        self.decode(&req, &bytes)
+    }
+
+    /// POST an `application/x-www-form-urlencoded` body to the instance's web root.
+    ///
+    /// For OAuth2's token endpoint, which is at `/login/oauth/access_token` — under the web
+    /// root, not `/api/v1`, and therefore absent from the generated client.
+    ///
+    /// # Credentials
+    ///
+    /// This sends whatever credential the client carries, and for a token exchange that is
+    /// wrong: the request authenticates with a `client_id` in the body, and attaching a stale
+    /// `Authorization` header alongside invites a server to authenticate the wrong one of the
+    /// two. Callers exchanging or refreshing a token use [`Client::anonymous`], which removes
+    /// the credential structurally rather than by remembering not to send it.
+    pub async fn web_form<T: DeserializeOwned>(
+        &self,
+        url: &str,
+        fields: Vec<(String, String)>,
+    ) -> Result<T> {
+        let req = self.web_form_request(url, fields)?;
+        let resp = self.web_send(&req, url).await?;
+        let bytes = resp.bytes().await?;
+        self.decode(&req, &bytes)
+    }
+
+    /// The same form POST, **without** turning a non-2xx status into an `Err`.
+    ///
+    /// Stands to [`Client::web_form`] exactly as [`Client::raw`] stands to [`Client::json`], and
+    /// exists for the same reason: the caller needs the body of a failed response, not a
+    /// classification of it. OAuth2's error body is RFC 6749 §5.2's `{error,
+    /// error_description}`, which is not Forgejo's API error shape, so the OAuth layer reads it
+    /// itself rather than having it flattened into a generic message on the way past.
+    pub async fn web_form_raw(
+        &self,
+        url: &str,
+        fields: Vec<(String, String)>,
+    ) -> Result<RawResponse> {
+        let req = self.web_form_request(url, fields)?;
+        let resp = self.dispatch(&req, Some(url)).await.map_err(|mut e| {
             e.ctx.path = Some(req.path.clone());
             e
         })?;
-        let mime = Mime::new(resp.content_type().unwrap_or("application/octet-stream"));
-        Ok((mime, resp.body))
+        let (status, headers, body) = resp.into_parts();
+        let headers = headers
+            .iter()
+            .map(|(n, v)| (n.as_str().to_owned(), v.to_str().unwrap_or("<non-utf8>").to_owned()))
+            .collect();
+        Ok(RawResponse { status: status.as_u16(), headers, body: collect(body).await? })
+    }
+
+    fn web_form_request(&self, url: &str, fields: Vec<(String, String)>) -> Result<Request> {
+        let mut req = self.web_request(Method::POST, url)?;
+        req.accept = Accept::Json;
+        req.body = Body::Form(fields);
+        Ok(req)
+    }
+
+    /// Send a request whose URL is on the web root, correcting the path reported on failure.
+    ///
+    /// `wire_path` prefixes the API subpath, which is right for every other request and wrong
+    /// for these — the URL is on the web root. Correcting it here means the `request:` line
+    /// names what was actually fetched rather than an `/api/v1/…` path that does not exist.
+    async fn web_send(&self, req: &Request, url: &str) -> Result<Response> {
+        self.send(req, Some(url)).await.map_err(|mut e| {
+            e.ctx.path = Some(req.path.clone());
+            e
+        })
+    }
+
+    /// The same instance, same transport, same retry policy — with no credential.
+    ///
+    /// Cheap: the transport is shared, and the base URLs are copied already-normalised rather
+    /// than re-parsed. The capability cache is deliberately *not* shared, because what an
+    /// anonymous client can see is not what an authenticated one can.
+    ///
+    /// This exists so that "the token exchange must not send an Authorization header" is a
+    /// property of the type rather than a rule someone has to keep in mind.
+    pub fn anonymous(&self) -> Client {
+        Client {
+            inner: Arc::new(Inner {
+                api_base: self.inner.api_base.clone(),
+                web_base: self.inner.web_base.clone(),
+                host: self.inner.host.clone(),
+                login: self.inner.login.clone(),
+                creds: Credentials::default(),
+                transport: Arc::clone(&self.inner.transport),
+                retry: self.inner.retry,
+                token_source: None,
+                probe_404: self.inner.probe_404,
+                caps: Mutex::new(None),
+                caps_gate: tokio::sync::Mutex::new(()),
+                on_wait: self.inner.on_wait.clone(),
+            }),
+        }
     }
 
     /// The [`Request`] `web_bytes` sends, separated out so the host check is testable and so a
@@ -587,7 +692,7 @@ impl Client {
     /// Its `path` is the instance-relative remainder of `url`, which is what the error messages
     /// and `--debug` trace show. The request is dispatched with `url` as an override, so the
     /// path is never used to build the URL and cannot reintroduce the `/api/v1` prefix.
-    fn web_request(&self, url: &str) -> Result<Request> {
+    fn web_request(&self, method: Method, url: &str) -> Result<Request> {
         let base = &self.inner.web_base;
         let rest = url.strip_prefix(base.as_str()).filter(|rest| {
             // `https://forge.test` must not be treated as a prefix of
@@ -599,7 +704,7 @@ impl Client {
                 "{url} is outside {base}. fjo will not send your token to this external URL. Download it separately with curl or a browser."
             ))));
         };
-        let mut req = Request::get(if rest.is_empty() { "/" } else { rest });
+        let mut req = Request::new(method, if rest.is_empty() { "/" } else { rest });
         req.accept = Accept::Any;
         Ok(req)
     }
@@ -860,6 +965,13 @@ impl Client {
             path: Some(path),
             status,
             token_source: self.inner.token_source.clone(),
+            credential_kind: match self.inner.creds.auth {
+                Auth::Token(_) => Some(CredentialKind::Pat),
+                Auth::Bearer(_) => Some(CredentialKind::Oauth2),
+                // Basic auth and no-credential are neither, and saying "personal access token"
+                // about them would put a wrong remedy in a 401.
+                Auth::None | Auth::Basic { .. } => None,
+            },
         }
     }
 
@@ -1750,6 +1862,112 @@ mod tests {
             Err(e) => e,
         };
         assert_eq!(e.ctx.path.as_deref(), Some("/o/r/releases/download/v1.0/gone.tgz"));
+    }
+
+    /// OpenID Connect discovery is not an API route, so it goes through the web root — but it
+    /// must inherit the same host check, which is what makes it safe to read an endpoint out of
+    /// the document it returns.
+    #[tokio::test]
+    async fn web_json_reads_a_document_from_the_web_root() {
+        let c = client(FakeTransport::new().on(
+            Method::GET,
+            "/.well-known/openid-configuration",
+            Canned::new(200).with_header("content-type", "application/json").with_body(
+                r#"{"token_endpoint":"https://git.example.org/login/oauth/access_token"}"#,
+            ),
+        ));
+        let v: serde_json::Value =
+            c.web_json("https://git.example.org/.well-known/openid-configuration").await.unwrap();
+        assert_eq!(v["token_endpoint"], "https://git.example.org/login/oauth/access_token");
+    }
+
+    /// The OAuth2 token endpoint takes a form POST, not JSON. Getting this wrong produces a
+    /// `400` whose body says nothing about content types.
+    #[tokio::test]
+    async fn web_form_posts_url_encoded_fields() {
+        let t = Arc::new(
+            FakeTransport::new().on(
+                Method::POST,
+                "/login/oauth/access_token",
+                Canned::new(200)
+                    .with_header("content-type", "application/json")
+                    .with_body(r#"{"access_token":"at","token_type":"bearer"}"#),
+            ),
+        );
+        let c = Client::builder("https://git.example.org", Auth::token("tok"))
+            .transport(t.clone())
+            .build()
+            .unwrap();
+
+        let v: serde_json::Value = c
+            .web_form(
+                "https://git.example.org/login/oauth/access_token",
+                vec![("grant_type".to_owned(), "authorization_code".to_owned())],
+            )
+            .await
+            .unwrap();
+        assert_eq!(v["access_token"], "at");
+
+        let call = &t.calls()[0];
+        assert_eq!(call.method, Method::POST);
+        assert_eq!(call.url, "https://git.example.org/login/oauth/access_token");
+    }
+
+    /// The bug this prevents: exchanging an authorization code while still presenting the old,
+    /// possibly expired credential. Forgejo authenticates a token request by the `client_id` in
+    /// the body, and an `Authorization` header alongside it is at best ignored and at worst the
+    /// thing the server decides to believe. `anonymous` makes that unrepresentable rather than
+    /// asking every call site to remember.
+    #[tokio::test]
+    async fn an_anonymous_client_keeps_the_instance_but_drops_the_credential() {
+        let t = Arc::new(
+            FakeTransport::new().on(
+                Method::POST,
+                "/login/oauth/access_token",
+                Canned::new(200)
+                    .with_header("content-type", "application/json")
+                    .with_body(r#"{"access_token":"at"}"#),
+            ),
+        );
+        let c = Client::builder("https://git.example.org", Auth::token("tok"))
+            .transport(t.clone())
+            .build()
+            .unwrap();
+        let anon = c.anonymous();
+
+        assert_eq!(anon.web_base(), c.web_base());
+        assert_eq!(anon.api_base(), c.api_base());
+        assert_eq!(anon.host(), c.host());
+
+        let _: serde_json::Value = anon
+            .web_form(
+                "https://git.example.org/login/oauth/access_token",
+                vec![("client_id".to_owned(), "cid".to_owned())],
+            )
+            .await
+            .unwrap();
+
+        let call = &t.calls()[0];
+        assert!(
+            !call.headers.iter().any(|(n, _)| n == "authorization"),
+            "a token exchange must not present a credential: {:?}",
+            call.headers
+        );
+    }
+
+    /// The host check belongs to every web-root method, not just the one it was written for.
+    #[tokio::test]
+    async fn the_host_check_covers_the_json_and_form_paths_too() {
+        let t = Arc::new(FakeTransport::new().fallback(Canned::new(200)));
+        let c = Client::builder("https://git.example.org", Auth::token("tok"))
+            .transport(t.clone())
+            .build()
+            .unwrap();
+
+        let url = "https://git.example.org.evil.example/login/oauth/access_token";
+        assert!(c.web_json::<serde_json::Value>(url).await.is_err());
+        assert!(c.web_form::<serde_json::Value>(url, vec![]).await.is_err());
+        assert_eq!(t.call_count(), 0, "a refused URL must never reach the network");
     }
 
     // ------------------------------------------------------------------- re-exported Method

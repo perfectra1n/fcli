@@ -77,6 +77,15 @@ zeroize = "1"
 keyring = "4"
 etcetera = "0.11"
 
+# --- crypto ---
+# Both are needed only by the OAuth2 PKCE flow, and on Linux both are already linked into the
+# binary through keyring -> secret-service, so the cost there is zero. xtask uses sha2 too, for
+# the spec lockfile digests.
+sha2 = "0.11"
+# `fill` is the whole of the API we use. `rand` would add rand_core, rand_chacha, ppv-lite86 and
+# zerocopy for a distribution layer we do not want.
+getrandom = "0.4"
+
 # --- errors ---
 thiserror = "2"
 
@@ -91,7 +100,6 @@ quote = "1"
 syn = { version = "3", features = ["full", "parsing", "printing"] }
 prettyplease = "0.3"
 heck = "0.5"
-sha2 = "0.11"
 
 # --- dev / test ---
 # Pinned exactly: the itest harness depends on how `get_host()` resolves the daemon address

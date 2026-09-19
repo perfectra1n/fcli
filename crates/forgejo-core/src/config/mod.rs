@@ -200,7 +200,8 @@ str_enum!(ColorPref, Auto => "auto", Always => "always", Never => "never");
 ///
 /// `aliases` is deliberately absent: it is a table, not a scalar, and is reached through
 /// [`Config::aliases`] / [`Config::set_alias`] instead of `config set`.
-pub const KEYS: &[&str] = &["browser", "color", "credential_store", "editor", "pager", "prompt"];
+pub const KEYS: &[&str] =
+    &["browser", "color", "credential_store", "editor", "oauth_client_id", "pager", "prompt"];
 
 // ------------------------------------------------------------------------------- Config
 
@@ -431,6 +432,16 @@ impl Config {
     /// `FJO_CREDENTIAL_STORE`, `--insecure-storage`, and the cached per-host probe result.
     pub fn credential_store(&self, host: Option<&str>) -> CredentialStore {
         self.parsed(host, "credential_store")
+    }
+
+    /// The OAuth2 client id to log in with, when this instance registers its own application.
+    ///
+    /// Unset means [`crate::oauth::BUILTIN_CLIENT_ID`], which every stock Forgejo accepts. The
+    /// per-host form is the one that matters: a user with one instance whose administrator
+    /// disabled the built-in applications should not have to pass `--client-id` to every other
+    /// instance as well.
+    pub fn oauth_client_id(&self, host: Option<&str>) -> Option<String> {
+        self.string(host, "oauth_client_id")
     }
 
     /// Default: [`ColorPref::Auto`].

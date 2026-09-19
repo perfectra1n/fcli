@@ -413,7 +413,7 @@ mod tests {
         let mut h = Hosts::empty_at(std::path::Path::new("/nonexistent/hosts.toml"));
         for i in inputs {
             let key = h.add_host(i).unwrap().name.clone();
-            h.add_login(&key, "me", None, vec![]).unwrap();
+            h.add_login(&key, "me", None, vec![], None).unwrap();
         }
         h
     }
